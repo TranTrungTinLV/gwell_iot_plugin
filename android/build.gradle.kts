@@ -7,7 +7,7 @@ val GWIOT_NEXUS_BASE_URL = "https://nexus-sg.gwell.cc/nexus/repository/"
 
 android {
     namespace = "com.foursgen.connect"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 26

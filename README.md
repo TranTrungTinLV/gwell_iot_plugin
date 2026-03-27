@@ -28,7 +28,18 @@ Then run:
 flutter pub get
 ```
 
-### 2. Add Gwell Maven repos
+### 2. Add Gwell credentials
+
+In your project's `android/gradle.properties`, add:
+
+```properties
+GWIOT_NEXUS_USERNAME=your_nexus_username
+GWIOT_NEXUS_PASSWORD=your_nexus_password
+```
+
+> ⚠️ Add `gradle.properties` to `.gitignore` if it contains sensitive credentials.
+
+### 3. Add Gwell Maven repos
 
 In your project's `android/settings.gradle.kts`, add Gwell repos inside `dependencyResolutionManagement > repositories`:
 
@@ -39,20 +50,23 @@ dependencyResolutionManagement {
         // ... your existing repos (Tuya, Google, etc.) ...
 
         // ── Gwell repos (required) ──
+        val nexusUsername = extra.properties["GWIOT_NEXUS_USERNAME"]?.toString() ?: ""
+        val nexusPassword = extra.properties["GWIOT_NEXUS_PASSWORD"]?.toString() ?: ""
         val GWIOT_NEXUS_BASE_URL = "https://nexus-sg.gwell.cc/nexus/repository/"
+
         maven {
             url = uri("${GWIOT_NEXUS_BASE_URL}/maven-releases/")
             credentials {
-                username = "iptime_eti_user"
-                password = "6S1Moa^HFaL!rEqQC"
+                username = nexusUsername
+                password = nexusPassword
             }
             isAllowInsecureProtocol = true
         }
         maven {
             url = uri("${GWIOT_NEXUS_BASE_URL}/maven-gwiot/")
             credentials {
-                username = "iptime_eti_user"
-                password = "6S1Moa^HFaL!rEqQC"
+                username = nexusUsername
+                password = nexusPassword
             }
             isAllowInsecureProtocol = true
         }
