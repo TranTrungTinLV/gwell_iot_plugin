@@ -1,11 +1,21 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 
 /// Flutter plugin for Gwell IoT SDK (C2C mode).
 ///
 /// Provides camera live view, playback, device management,
 /// QR scan, and device binding through native Gwell SDK.
+///
+/// Method names match iOS GWIoTMethodChannel for consistency.
 class GwellIotPlugin {
-  static const _channel = MethodChannel('com.foursgen.connect/gwell_iot');
+  static const _channel = MethodChannel('com.reoqoo/gwiot');
+
+  static Map<String, dynamic> _asMap(dynamic raw) {
+    if (raw == null) return <String, dynamic>{};
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    debugPrint("rawwwwwww::::::${raw}");
+    return <String, dynamic>{};
+  }
 
   // ── SDK Init ──────────────────────────────────────────────────────────
 
@@ -23,9 +33,12 @@ class GwellIotPlugin {
         'appToken': appToken,
         'language': language,
       });
-      return Map<String, dynamic>.from(result);
+      return _asMap(result);
     } on PlatformException catch (e) {
       return {'success': false, 'message': e.message ?? 'SDK init failed'};
+    } on MissingPluginException catch (_) {
+      // iOS: SDK initialized in AppDelegate, method not handled in channel
+      return {'success': true, 'message': 'SDK already initialized (iOS)'};
     }
   }
 
@@ -35,19 +48,39 @@ class GwellIotPlugin {
   static Future<String> getPhoneUniqueId() async {
     try {
       final result = await _channel.invokeMethod('getPhoneUniqueId');
-      final map = Map<String, dynamic>.from(result);
+      final map = _asMap(result);
       return map['phoneUniqueId'] as String? ?? '';
     } on PlatformException catch (_) {
       return '';
     }
   }
 
-  // ── C2C Login ─────────────────────────────────────────────────────────
+  /// Login SDK with C2C credentials from backend.
+  /// Matches iOS `loginSDK` method.
+  static Future<Map<String, dynamic>> loginSDK({
+    required String accessId,
+    required String accessToken,
+    String terminalId = '',
+    String expireTime = '0',
+    String region = 'VN',
+    String? expand,
+  }) async {
+    try {
+      final result = await _channel.invokeMethod('loginSDK', {
+        'accessId': accessId,
+        'accessToken': accessToken,
+        'terminalId': terminalId,
+        'expireTime': expireTime,
+        'region': region,
+        if (expand != null && expand.isNotEmpty) 'expand': expand,
+      });
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'loginSDK failed'};
+    }
+  }
 
-  /// Login with C2C credentials from your backend.
-  ///
-  /// Uses `login2()` internally for proper result handling.
-  /// [expand] should be the raw `expend` field from Gwell's thirdCustLogin response.
+  /// Legacy alias for [loginSDK].
   static Future<Map<String, dynamic>> loginWithC2CInfo({
     required String accessId,
     required String accessToken,
@@ -55,45 +88,91 @@ class GwellIotPlugin {
     required String terminalId,
     required String expand,
   }) async {
+    return loginSDK(
+      accessId: accessId,
+      accessToken: accessToken,
+      terminalId: terminalId,
+      expireTime: expireTime,
+      expand: expand,
+    );
+  }
+
+  /// Check login status. Returns `{"isLoggedIn": bool}`.
+  static Future<Map<String, dynamic>> checkLoginStatus() async {
     try {
-      final result = await _channel.invokeMethod('loginWithC2CInfo', {
-        'accessId': accessId,
-        'accessToken': accessToken,
-        'expireTime': expireTime,
-        'terminalId': terminalId,
-        'expand': expand,
-      });
-      return Map<String, dynamic>.from(result);
+      final result = await _channel.invokeMethod('checkLoginStatus');
+      return _asMap(result);
+    } on PlatformException catch (_) {
+      return {'isLoggedIn': false};
+    }
+  }
+
+  /// Check if currently logged in.
+  static Future<bool> isLoggedIn() async {
+    final status = await checkLoginStatus();
+    return status['isLoggedIn'] == true;
+  }
+
+  /// Logout from Gwell SDK.
+  static Future<Map<String, dynamic>> logout() async {
+    try {
+      final result = await _channel.invokeMethod('logout');
+      return _asMap(result);
     } on PlatformException catch (e) {
-      return {'success': false, 'message': e.message ?? 'C2C login failed'};
+      return {'success': false, 'error': e.message ?? 'Logout failed'};
     }
   }
 
   // ── Device Management ─────────────────────────────────────────────────
 
   /// Query device list from Gwell cloud.
-  static Future<Map<String, dynamic>> queryDeviceList() async {
+  /// Returns `{"success": true, "devices": [...]}` with isOnline status.
+  static Future<Map<String, dynamic>> getDeviceList() async {
     try {
-      final result = await _channel.invokeMethod('queryDeviceList');
-      return Map<String, dynamic>.from(result);
+      final result = await _channel.invokeMethod('getDeviceList');
+      return _asMap(result);
     } on PlatformException catch (e) {
-      return {'success': false, 'message': e.message ?? 'Query failed'};
+      return {'success': false, 'error': e.message ?? 'Query failed'};
     }
   }
 
-  // ── Camera Features ───────────────────────────────────────────────────
+  /// Alias for [getDeviceList].
+  static Future<Map<String, dynamic>> queryDeviceList() => getDeviceList();
+
+  /// Get typed device list.
+  static Future<List<Map<String, dynamic>>> getDeviceListParsed() async {
+    final result = await getDeviceList();
+    if (result['success'] == true) {
+      final rawDevices = result['devices'];
+      debugPrint("rawDevices:::::${rawDevices}");
+      if (rawDevices is List) {
+        return rawDevices
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+    }
+    return const <Map<String, dynamic>>[];
+  }
+
+  // ── Camera Features (Built-in UI) ─────────────────────────────────────
 
   /// Open live view for a device (SDK built-in UI).
-  static Future<Map<String, dynamic>> openLiveView(String deviceId) async {
+  /// Matches iOS `openDeviceHome`.
+  static Future<Map<String, dynamic>> openDeviceHome(String deviceId) async {
     try {
-      final result = await _channel.invokeMethod('openLiveView', {
+      final result = await _channel.invokeMethod('openDeviceHome', {
         'deviceId': deviceId,
       });
-      return Map<String, dynamic>.from(result);
+      return _asMap(result);
     } on PlatformException catch (e) {
-      return {'success': false, 'message': e.message ?? 'Live view failed'};
+      return {'success': false, 'error': e.message ?? 'Live view failed'};
     }
   }
+
+  /// Alias for [openDeviceHome].
+  static Future<Map<String, dynamic>> openLiveView(String deviceId) =>
+      openDeviceHome(deviceId);
 
   /// Open playback for a device (SDK built-in UI).
   static Future<Map<String, dynamic>> openPlayback(String deviceId) async {
@@ -101,33 +180,43 @@ class GwellIotPlugin {
       final result = await _channel.invokeMethod('openPlayback', {
         'deviceId': deviceId,
       });
-      return Map<String, dynamic>.from(result);
+      return _asMap(result);
     } on PlatformException catch (e) {
-      return {'success': false, 'message': e.message ?? 'Playback failed'};
+      return {'success': false, 'error': e.message ?? 'Playback failed'};
     }
   }
 
-  /// Open device settings page (SDK built-in UI).
-  static Future<Map<String, dynamic>> openDeviceSettings(String deviceId) async {
+  /// Open playback with specific start time.
+  static Future<Map<String, dynamic>> openPlaybackWithTime({
+    required String deviceId,
+    required int startTime,
+  }) async {
     try {
-      final result = await _channel.invokeMethod('openDeviceSettings', {
+      final result = await _channel.invokeMethod('openPlaybackWithTime', {
         'deviceId': deviceId,
+        'startTime': startTime,
       });
-      return Map<String, dynamic>.from(result);
+      return _asMap(result);
     } on PlatformException catch (e) {
-      return {'success': false, 'message': e.message ?? 'Settings failed'};
+      return {'success': false, 'error': e.message ?? 'Playback failed'};
     }
   }
 
-  /// Open device events/alerts page (SDK built-in UI).
-  static Future<Map<String, dynamic>> openDeviceEvents(String deviceId) async {
+  /// Check cloud playback permission for a device.
+  static Future<Map<String, dynamic>> getCloudPlaybackPermission(
+      String deviceId) async {
     try {
-      final result = await _channel.invokeMethod('openDeviceEvents', {
+      final result =
+          await _channel.invokeMethod('getCloudPlaybackPermission', {
         'deviceId': deviceId,
       });
-      return Map<String, dynamic>.from(result);
+      return _asMap(result);
     } on PlatformException catch (e) {
-      return {'success': false, 'message': e.message ?? 'Events failed'};
+      return {
+        'success': false,
+        'hasPermission': false,
+        'error': e.message ?? 'Failed'
+      };
     }
   }
 
@@ -137,41 +226,139 @@ class GwellIotPlugin {
   static Future<Map<String, dynamic>> openScanQRCode() async {
     try {
       final result = await _channel.invokeMethod('openScanQRCode');
-      return Map<String, dynamic>.from(result);
+      return _asMap(result);
     } on PlatformException catch (e) {
-      return {'success': false, 'message': e.message ?? 'QR scan failed'};
+      return {'success': false, 'error': e.message ?? 'QR scan failed'};
     }
   }
 
   /// Open bindable product list.
-  static Future<Map<String, dynamic>> openBindProductList() async {
+  static Future<Map<String, dynamic>> openProductList() async {
     try {
-      final result = await _channel.invokeMethod('openBindProductList');
-      return Map<String, dynamic>.from(result);
+      final result = await _channel.invokeMethod('openProductList');
+      return _asMap(result);
     } on PlatformException catch (e) {
-      return {'success': false, 'message': e.message ?? 'Bind list failed'};
+      return {'success': false, 'error': e.message ?? 'Product list failed'};
     }
   }
 
-  // ── Logout ────────────────────────────────────────────────────────────
+  /// Alias for [openProductList].
+  static Future<Map<String, dynamic>> openBindProductList() =>
+      openProductList();
 
-  /// Logout from Gwell SDK.
-  static Future<Map<String, dynamic>> logout() async {
+  /// Open bind flow with QR value.
+  static Future<Map<String, dynamic>> openBindByQRCode(String qrValue) async {
     try {
-      final result = await _channel.invokeMethod('logout');
-      return Map<String, dynamic>.from(result);
+      final result = await _channel.invokeMethod('openBindByQRCode', {
+        'qrValue': qrValue,
+      });
+      return _asMap(result);
     } on PlatformException catch (e) {
-      return {'success': false, 'message': e.message ?? 'Logout failed'};
+      return {'success': false, 'error': e.message ?? 'Bind failed'};
     }
   }
 
-  /// Check if currently logged in.
-  static Future<bool> isLoggedIn() async {
+  // ── Device Pages ──────────────────────────────────────────────────────
+
+  /// Open device settings page (SDK built-in UI).
+  static Future<Map<String, dynamic>> openDeviceSettingPage(
+      String deviceId) async {
     try {
-      final result = await _channel.invokeMethod('isLoggedIn');
-      return (result as Map?)?['isLoggedIn'] == true;
-    } catch (_) {
-      return false;
+      final result = await _channel.invokeMethod('openDeviceSettingPage', {
+        'deviceId': deviceId,
+      });
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Settings failed'};
+    }
+  }
+
+  /// Alias for [openDeviceSettingPage].
+  static Future<Map<String, dynamic>> openDeviceSettings(String deviceId) =>
+      openDeviceSettingPage(deviceId);
+
+  /// Open device info page (SDK built-in UI).
+  static Future<Map<String, dynamic>> openDeviceInfoPage(
+      String deviceId) async {
+    try {
+      final result = await _channel.invokeMethod('openDeviceInfoPage', {
+        'deviceId': deviceId,
+      });
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Info failed'};
+    }
+  }
+
+  /// Open events/alerts page (SDK built-in UI).
+  static Future<Map<String, dynamic>> openEventsPage(String deviceId) async {
+    try {
+      final result = await _channel.invokeMethod('openEventsPage', {
+        'deviceId': deviceId,
+      });
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Events failed'};
+    }
+  }
+
+  /// Alias for [openEventsPage].
+  static Future<Map<String, dynamic>> openDeviceEvents(String deviceId) =>
+      openEventsPage(deviceId);
+
+  /// Open message center page (SDK built-in UI).
+  static Future<Map<String, dynamic>> openMessageCenterPage() async {
+    try {
+      final result = await _channel.invokeMethod('openMessageCenterPage');
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {
+        'success': false,
+        'error': e.message ?? 'Message center failed'
+      };
+    }
+  }
+
+  /// Open device share page (SDK built-in UI).
+  static Future<Map<String, dynamic>> openDevSharePage(String deviceId) async {
+    try {
+      final result = await _channel.invokeMethod('openDevSharePage', {
+        'deviceId': deviceId,
+      });
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Share page failed'};
+    }
+  }
+
+  // ── Language & UI ─────────────────────────────────────────────────────
+
+  /// Set SDK language ("vi", "en", "zh").
+  static Future<Map<String, dynamic>> setLanguage(String code) async {
+    try {
+      final result = await _channel.invokeMethod('setLanguage', {
+        'code': code,
+      });
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'setLanguage failed'};
+    }
+  }
+
+  /// Set UI configuration (brand color etc.)
+  static Future<Map<String, dynamic>> setUIConfiguration({
+    required String brandColor,
+  }) async {
+    try {
+      final result = await _channel.invokeMethod('setUIConfiguration', {
+        'brandColor': brandColor,
+      });
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {
+        'success': false,
+        'error': e.message ?? 'setUIConfiguration failed'
+      };
     }
   }
 }

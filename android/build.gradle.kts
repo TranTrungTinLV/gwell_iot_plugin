@@ -131,6 +131,8 @@ dependencies {
     implementation("com.google.firebase:firebase-common:21.0.0")
 
     // Yoosee/Gwell Plugin Hub - Google variant
+
+
     implementation("com.yoosee.gw_plugin_hub:impl_main:google-release-6.39.0.0.8") {
         exclude(group = "com.google.android.material")
         exclude(group = "com.yoosee.gw_plugin_hub", module = "liblog_release")
@@ -139,11 +141,18 @@ dependencies {
         exclude(group = "androidx.activity", module = "activity-ktx")
         exclude(group = "com.gwell", module = "gwiotapi")
         exclude(group = "com.tencentcs", module = "txtraevoip")
+        // Fix duplicate classes/resources
+        exclude(group = "cn.aigestudio.wheelpicker")
+        exclude(group = "com.contrarywind")
+        exclude(group = "com.eightbitlab", module = "blurview")
+        exclude(group = "com.yoosee.gw_plugin_hub", module = "lib_m3u8manger")
     }
 
-    // Reoqoo Plugin Hub
     implementation("com.reoqoo.gw_plugin_hub:main:dss-release-01.06.01.0.58") {
         exclude(group = "com.gwell", module = "gwiotapi")
+        exclude(group = "cn.aigestudio.wheelpicker")
+        exclude(group = "com.contrarywind")
+        exclude(group = "com.eightbitlab", module = "blurview")
     }
 
     // AndroidX
