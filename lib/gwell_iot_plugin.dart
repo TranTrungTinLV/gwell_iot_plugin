@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 
@@ -7,8 +9,99 @@ import 'package:flutter/services.dart';
 /// QR scan, and device binding through native Gwell SDK.
 ///
 /// Method names match iOS GWIoTMethodChannel for consistency.
+/// EventChannel matches iOS GWIoTEventChannel for real-time events.
 class GwellIotPlugin {
   static const _channel = MethodChannel('com.reoqoo/gwiot');
+
+  // ── EventChannel — matching iOS GWIoTEventChannel ─────────────────────
+  static const _eventChannel = EventChannel('com.reoqoo/gwiot_events');
+
+  /// Broadcast stream of all events from native SDK.
+  /// Each event is a Map with a 'type' key indicating the event type.
+  ///
+  /// Event types:
+  /// - `loginStatusChanged`: {type, isLoggedIn: bool}
+  /// - `deviceListUpdated`: {type, devices: List<Map>}
+  /// - `tokenExpired`: {type}
+  /// - `accountEvent`: {type, event: String}
+  /// - `bindSuccess`: {type, device: Map}
+  /// - `bindFailed`: {type, error: String}
+  /// - `bindCancelled`: {type}
+  /// - `pushReceived`: {type, ...payload}
+  /// - `pushClicked`: {type, ...payload}
+  static Stream<Map<String, dynamic>> get events {
+    return _eventChannel
+        .receiveBroadcastStream()
+        .map((event) => Map<String, dynamic>.from(event as Map));
+  }
+
+  /// Stream of login status changes.
+  /// Emits `{type: 'loginStatusChanged', isLoggedIn: bool}`
+  static Stream<bool> get loginStatusStream {
+    return events
+        .where((e) => e['type'] == 'loginStatusChanged')
+        .map((e) => e['isLoggedIn'] as bool? ?? false);
+  }
+
+  /// Stream of device list updates.
+  /// Emits `{type: 'deviceListUpdated', devices: List<Map>}`
+  static Stream<List<Map<String, dynamic>>> get deviceListStream {
+    return events
+        .where((e) => e['type'] == 'deviceListUpdated')
+        .map((e) {
+      final devices = e['devices'] as List? ?? [];
+      return devices
+          .map((d) => Map<String, dynamic>.from(d as Map))
+          .toList();
+    });
+  }
+
+  /// Stream that emits when SDK token expires (login -> not logged in).
+  /// Use this to trigger re-authentication.
+  static Stream<void> get tokenExpiredStream {
+    return events
+        .where((e) => e['type'] == 'tokenExpired')
+        .map((_) {});
+  }
+
+  /// Stream of account events from SDK.
+  /// Emits event description string.
+  static Stream<String> get accountEventStream {
+    return events
+        .where((e) => e['type'] == 'accountEvent')
+        .map((e) => e['event'] as String? ?? '');
+  }
+
+  /// Stream of bind events (success, failed, cancelled).
+  /// Emits the full event map with type: bindSuccess/bindFailed/bindCancelled.
+  static Stream<Map<String, dynamic>> get bindEventStream {
+    return events.where((e) {
+      final type = e['type'] as String? ?? '';
+      return type == 'bindSuccess' ||
+          type == 'bindFailed' ||
+          type == 'bindCancelled';
+    });
+  }
+
+  /// Stream of device events (deleted, renamed, sharing accepted).
+  /// Emits the full event map from Gwell SDK's deviceEvents LiveEvent.
+  static Stream<Map<String, dynamic>> get deviceEventStream {
+    return events.where((e) {
+      final type = e['type'] as String? ?? '';
+      return type == 'deviceDeleted' ||
+          type == 'deviceNameChanged' ||
+          type == 'sharingDeviceAccepted';
+    });
+  }
+
+  /// Stream of push notification events.
+  /// Emits the full event map with type: pushReceived/pushClicked.
+  static Stream<Map<String, dynamic>> get pushEventStream {
+    return events.where((e) {
+      final type = e['type'] as String? ?? '';
+      return type == 'pushReceived' || type == 'pushClicked';
+    });
+  }
 
   static Map<String, dynamic> _asMap(dynamic raw) {
     if (raw == null) return <String, dynamic>{};
@@ -155,6 +248,27 @@ class GwellIotPlugin {
     return const <Map<String, dynamic>>[];
   }
 
+  // ── Thumbnail ──────────────────────────────────────────────────────────
+
+  /// Get the last snapshot/thumbnail path for a device.
+  /// Returns {success: true, path: '/path/to/image'} or {success: false, error: '...'}.
+  static Future<String?> getLastSnapshotPath(String deviceId) async {
+    try {
+      final result = await _channel.invokeMethod('getLastSnapshotPath', {
+        'deviceId': deviceId,
+      });
+      final map = _asMap(result);
+      if (map['success'] == true) {
+        final path = map['path'] as String?;
+        return (path != null && path.isNotEmpty) ? path : null;
+      }
+      return null;
+    } on PlatformException catch (e) {
+      debugPrint('⚠️ [GwellIotPlugin] getLastSnapshotPath error: ${e.message}');
+      return null;
+    }
+  }
+
   // ── Camera Features (Built-in UI) ─────────────────────────────────────
 
   /// Open live view for a device (SDK built-in UI).
@@ -174,6 +288,16 @@ class GwellIotPlugin {
   static Future<Map<String, dynamic>> openLiveView(String deviceId) =>
       openDeviceHome(deviceId);
 
+  /// Open built-in multi-camera surveillance page (多设备同屏).
+  /// Shows all devices in a grid with live streams.
+  static Future<Map<String, dynamic>> openMultiLivePage() async {
+    try {
+      final result = await _channel.invokeMethod('openMultiLivePage');
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Multi-live failed'};
+    }
+  }
   /// Open playback for a device (SDK built-in UI).
   static Future<Map<String, dynamic>> openPlayback(String deviceId) async {
     try {
@@ -358,6 +482,46 @@ class GwellIotPlugin {
       return {
         'success': false,
         'error': e.message ?? 'setUIConfiguration failed'
+      };
+    }
+  }
+
+  // ── Push Notification — matching iOS GWIoTPushNotificationBridge ──────
+
+  /// Forward received push notification payload to SDK.
+  /// iOS: GWIoT.shared.receivePushNotification(noti:)
+  /// Call this when your FCM/APNs handler receives a notification.
+  static Future<Map<String, dynamic>> receivePushNotification(
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      final result = await _channel.invokeMethod('receivePushNotification', {
+        'payload': payload,
+      });
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {
+        'success': false,
+        'error': e.message ?? 'receivePushNotification failed'
+      };
+    }
+  }
+
+  /// Forward push notification click to SDK.
+  /// iOS: GWIoT.shared.clickPushNotification(noti:)
+  /// Call this when user taps on a notification.
+  static Future<Map<String, dynamic>> clickPushNotification(
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      final result = await _channel.invokeMethod('clickPushNotification', {
+        'payload': payload,
+      });
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {
+        'success': false,
+        'error': e.message ?? 'clickPushNotification failed'
       };
     }
   }

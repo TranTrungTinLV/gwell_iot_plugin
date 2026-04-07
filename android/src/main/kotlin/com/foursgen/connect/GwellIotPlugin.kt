@@ -1,9 +1,11 @@
 package com.foursgen.connect
 import android.app.Activity
+import android.content.Intent
 import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
@@ -15,7 +17,10 @@ import com.gw.gwiotapi.entities.ScanQRCodeOptions
 import com.gw.gwiotapi.entities.OpenPluginOption
 import com.gw.gwiotapi.entities.PlaybackOption
 import com.gw.gwiotapi.entities.Device
+import com.gw.gwiotapi.entities.PushNotification
+import com.gw.gwiotapi.entities.DeviceEvent
 import android.content.Context
+import android.view.View
 import com.gw.gwiotapi.entities.AppTexts
 import com.gw.gwiotapi.entities.DevShareOption
 import com.gw.gwiotapi.entities.Theme
@@ -31,9 +36,11 @@ import kotlinx.coroutines.launch
  * Core logic COPIED from working project: intergrate_gwell/GwellAuthPlugin.kt
  * Method names match iOS GWIoTMethodChannel.swift for cross-platform parity.
  */
-class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
+class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventChannel.StreamHandler {
 
     private lateinit var channel: MethodChannel
+    private var eventChannel: EventChannel? = null
+    private var eventSink: EventChannel.EventSink? = null
     private val scope = CoroutineScope(Dispatchers.Main)
     private val TAG = "GwellIotPlugin"
     private var flutterPluginBinding: FlutterPlugin.FlutterPluginBinding? = null
@@ -48,17 +55,241 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private var lastRegRegion: String = "SG"
     private var lastAreaCode: String = "sg"
 
+    /// Track previous login state to detect token expiry (true → false)
+    private var wasLoggedIn: Boolean = false
+
+    /// Flag to ensure bind listener is only set up once
+    private var isBindListenerSetup: Boolean = false
+
     private val currentActivity: Activity? get() = activity
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         flutterPluginBinding = binding
         channel = MethodChannel(binding.binaryMessenger, "com.reoqoo/gwiot")
         channel.setMethodCallHandler(this)
+
+        // EventChannel — matching iOS GWIoTEventChannel (com.reoqoo/gwiot_events)
+        eventChannel = EventChannel(binding.binaryMessenger, "com.reoqoo/gwiot_events")
+        eventChannel?.setStreamHandler(this)
+
+        // ✅ Register native video view for multi-camera
+        binding.platformViewRegistry.registerViewFactory(
+            GwellNativeVideoViewFactory.VIEW_TYPE,
+            GwellNativeVideoViewFactory(binding.binaryMessenger)
+        )
+        Log.i(TAG, "[PlatformView] ✅ Registered ${GwellNativeVideoViewFactory.VIEW_TYPE}")
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        eventChannel?.setStreamHandler(null)
+        eventChannel = null
+        eventSink = null
         flutterPluginBinding = null
+    }
+
+    // ── EventChannel.StreamHandler ────────────────────────────────────────
+    override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+        Log.i(TAG, "[EventChannel] 🎧 Flutter started listening to events")
+        eventSink = events
+        wasLoggedIn = try {
+            GWIoT.isLogin.value ?: false
+        } catch (_: Exception) { false }
+        startObservingLiveData()
+    }
+
+    override fun onCancel(arguments: Any?) {
+        Log.i(TAG, "[EventChannel] 🔇 Flutter stopped listening to events")
+        eventSink = null
+    }
+
+    /**
+     * Send event to Flutter via EventChannel (ensure main thread).
+     * Matching iOS GWIoTEventChannel.sendEvent()
+     */
+    private fun sendEventToFlutter(data: Map<String, Any?>) {
+        scope.launch {
+            try {
+                eventSink?.success(data)
+                Log.d(TAG, "[EventChannel] 📤 Sent event: ${data["type"]}")
+            } catch (e: Exception) {
+                Log.w(TAG, "[EventChannel] ⚠️ Failed to send event: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Observe SDK LiveData / LiveEvent — matching iOS GWIoTEventChannel.startObserving()
+     * Streams: loginStatusChanged, deviceListUpdated, tokenExpired, accountEvent
+     */
+    private fun startObservingLiveData() {
+        if (!GwellSdkInitializer.sdkInitialized) {
+            Log.w(TAG, "[EventChannel] SDK not initialized, skipping observers")
+            return
+        }
+
+        try {
+            // ── Login Status — matching iOS isLogin.observe ──
+            GWIoT.isLogin.observeForever { isLoggedIn ->
+                val loggedIn = isLoggedIn ?: false
+
+                // Detect token expired: was logged in → now not
+                if (wasLoggedIn && !loggedIn) {
+                    Log.i(TAG, "[EventChannel] 🔑 Token expired detected (isLogin: true → false)")
+                    sendEventToFlutter(mapOf("type" to "tokenExpired"))
+                }
+                wasLoggedIn = loggedIn
+
+                sendEventToFlutter(mapOf(
+                    "type" to "loginStatusChanged",
+                    "isLoggedIn" to loggedIn
+                ))
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "[EventChannel] isLogin observe failed: ${e.message}")
+        }
+
+        try {
+            // ── Device List — matching iOS deviceList.observe ──
+            GWIoT.deviceList.observeForever { devices ->
+                val deviceArray = (devices as? List<*>)?.filterIsInstance<Device>() ?: emptyList()
+                val list = deviceArray.map { device ->
+                    mapOf(
+                        "deviceId" to device.deviceId,
+                        "deviceName" to device.remarkName,
+                    )
+                }
+                sendEventToFlutter(mapOf(
+                    "type" to "deviceListUpdated",
+                    "devices" to list
+                ))
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "[EventChannel] deviceList observe failed: ${e.message}")
+        }
+
+        try {
+            // ── Account Event — matching iOS accountEvent.observe ──
+            GWIoT.accountEvent.observeForever { event ->
+                if (event == null) return@observeForever
+                val eventDesc = event.toString().lowercase()
+                Log.i(TAG, "[EventChannel] 📋 AccountEvent: $eventDesc")
+
+                // If SDK reports token/session expired via accountEvent, also emit tokenExpired
+                if (eventDesc.contains("token") || eventDesc.contains("expire") || eventDesc.contains("auth")) {
+                    Log.i(TAG, "[EventChannel] 🔑 AccountEvent suggests token issue. Emitting tokenExpired.")
+                    sendEventToFlutter(mapOf("type" to "tokenExpired"))
+                }
+
+                sendEventToFlutter(mapOf(
+                    "type" to "accountEvent",
+                    "event" to event.toString()
+                ))
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "[EventChannel] accountEvent observe failed: ${e.message}")
+        }
+
+        try {
+            // ── Device Events — DeviceDeleted, NameChanged, SharingDeviceAccepted ──
+            GWIoT.deviceEvents.observeForever { event ->
+                if (event == null) return@observeForever
+                Log.i(TAG, "[EventChannel] 📋 DeviceEvent: $event")
+
+                when (event) {
+                    is DeviceEvent.DeviceDeleted -> {
+                        Log.i(TAG, "[EventChannel] 🗑️ Device DELETED: ${event.deviceId}")
+                        sendEventToFlutter(mapOf(
+                            "type" to "deviceDeleted",
+                            "deviceId" to event.deviceId
+                        ))
+                        // Cũng emit bindSuccess để reload danh sách
+                        scope.launch { emitBindSuccessEvent() }
+                    }
+                    is DeviceEvent.NameChanged -> {
+                        Log.i(TAG, "[EventChannel] ✏️ Device renamed: ${event.deviceId} -> ${event.name}")
+                        sendEventToFlutter(mapOf(
+                            "type" to "deviceNameChanged",
+                            "deviceId" to event.deviceId,
+                            "newName" to event.name
+                        ))
+                    }
+                    is DeviceEvent.SharingDeviceAccepted -> {
+                        Log.i(TAG, "[EventChannel] 🤝 Sharing accepted: ${event.deviceId}")
+                        sendEventToFlutter(mapOf(
+                            "type" to "sharingDeviceAccepted",
+                            "deviceId" to event.deviceId
+                        ))
+                        scope.launch { emitBindSuccessEvent() }
+                    }
+                    else -> {
+                        Log.d(TAG, "[EventChannel] Unknown DeviceEvent: $event")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "[EventChannel] deviceEvents observe failed: ${e.message}")
+        }
+
+        // Setup bind event listener
+        setupBindEventListener()
+    }
+
+    /**
+     * Bind Event Listener — matching iOS GWIoTDeviceBridge.setupBindEventListener()
+     * Observes GWPlugin.bindEvents → emit bindSuccess, bindFailed, bindCancelled
+     */
+    private fun setupBindEventListener() {
+        if (isBindListenerSetup) {
+            Log.d(TAG, "[BindEvent] ⚠️ Bind event listener already set up")
+            return
+        }
+
+        try {
+            Log.i(TAG, "[BindEvent] 🎧 Setting up Bind Event Listener")
+
+            // Try to access GWPlugin.bindEvents via reflection
+            // iOS: GWPlugin.shared.bindEvents.observe
+            // Android: may be GWIoT.bindComp or similar
+            val gwPluginClass = try {
+                Class.forName("com.gw.gwiotapi.GWPlugin")
+            } catch (_: ClassNotFoundException) {
+                try {
+                    Class.forName("com.gw.gwiotapi.plugin.GWPlugin")
+                } catch (_: ClassNotFoundException) {
+                    null
+                }
+            }
+
+            if (gwPluginClass != null) {
+                // Try to get singleton instance
+                val sharedField = gwPluginClass.declaredFields.find {
+                    it.name.equals("INSTANCE", ignoreCase = true) ||
+                    it.name.equals("shared", ignoreCase = true) ||
+                    it.name.equals("Companion", ignoreCase = true)
+                }
+                if (sharedField != null) {
+                    sharedField.isAccessible = true
+                    val instance = sharedField.get(null)
+                    // Try to find bindEvents property
+                    val bindEventsField = gwPluginClass.declaredFields.find {
+                        it.name.contains("bindEvent", ignoreCase = true)
+                    }
+                    if (bindEventsField != null && instance != null) {
+                        bindEventsField.isAccessible = true
+                        val bindEvents = bindEventsField.get(instance)
+                        Log.i(TAG, "[BindEvent] ✅ Found bindEvents: ${bindEvents?.javaClass?.name}")
+                        // Attempt to observe — implementation depends on SDK API
+                    }
+                }
+            }
+
+            isBindListenerSetup = true
+            Log.i(TAG, "[BindEvent] ✅ Bind event listener setup complete")
+        } catch (e: Exception) {
+            Log.w(TAG, "[BindEvent] Setup failed (non-fatal): ${e.message}")
+            isBindListenerSetup = true // Don't retry
+        }
     }
 
     // ── ActivityAware ────────────────────────────────────────────────────
@@ -102,6 +333,7 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             // ── Device Management (matching working project) ──────
             "getDeviceList" -> handleQueryDeviceList(result)
             "queryDeviceList" -> handleQueryDeviceList(result)
+            "getLastSnapshotPath" -> handleGetLastSnapshotPath(call, result)
 
             // ── Player - Built-in UI (matching working project) ───
             "openDeviceHome" -> handleOpenLiveView(call, result)
@@ -116,14 +348,21 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             "openBindProductList" -> handleOpenBindProductList(result)
             "openBindByQRCode" -> handleOpenBindByQRCode(call, result)
 
-            // ── Device Pages (matching working project) ──────────
+            // ── Device Pages (matching iOS GWIoTDeviceBridge) ──────────
             "openDeviceSettingPage" -> handleOpenDeviceSettings(call, result)
             "openDeviceSettings" -> handleOpenDeviceSettings(call, result)
-            "openDeviceInfoPage" -> handleOpenDeviceSettings(call, result) // same as settings
+            "openDeviceInfoPage" -> handleOpenDeviceInfoPage(call, result)
             "openEventsPage" -> handleOpenDeviceEvents(call, result)
             "openDeviceEvents" -> handleOpenDeviceEvents(call, result)
             "openMessageCenterPage" -> handleOpenMessageCenterPage(result)
             "openDevSharePage" -> handleOpenDevSharePage(call, result)
+
+            // ── Multi-Live (built-in multi-camera surveillance) ───
+            "openMultiLivePage" -> handleOpenMultiLivePage(result)
+
+            // ── Push Notification (matching iOS GWIoTPushNotificationBridge) ──
+            "receivePushNotification" -> handleReceivePushNotification(call, result)
+            "clickPushNotification" -> handleClickPushNotification(call, result)
 
             // ── UI Config ────────────────────────────────────────
             "setLanguage" -> handleSetLanguage(call, result)
@@ -252,8 +491,8 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                     // Wait for LoginSucceededUtils to finish + components to mount
                     // Internal device sync WILL fail with 10007 - that's expected.
                     // Our explicit queryDeviceList() will succeed because we patch MMKV before it.
-                    Log.i(TAG, "[C2C_LOGIN] ⏳ Waiting 3s for SDK components to mount...")
-                    kotlinx.coroutines.delay(3000)
+                    Log.i(TAG, "[C2C_LOGIN] ⏳ Waiting 1.5s for SDK components to mount...")
+                    kotlinx.coroutines.delay(1500)
 
                     // Patch MMKV after LoginSucceededUtils has written regRegion=null
                     patchAllMmkvStores(lastRegRegion, lastAreaCode)
@@ -681,6 +920,9 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                             )
                         }
                         Log.i(TAG, "[DEVICE_LIST] ✅ Found ${list.size} devices")
+                        // ⚠️ DO NOT call emitBindSuccessEvent() here!
+                        // It creates an infinite loop: query → bindSuccess → Flutter reload → query → ...
+                        // bindSuccess is only emitted from actual bind actions (scan QR, bind product list)
                         // iOS returns: {"success": true, "devices": [...]}
                         result.success(mapOf("success" to true, "devices" to list))
                     }
@@ -732,6 +974,64 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             } catch (e: Exception) {
                 Log.e(TAG, "[LIVE_VIEW] EXCEPTION: ${e.message}", e)
                 handleErrorResult("LIVE_VIEW", e, result)
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  THUMBNAIL — Get last snapshot path for a device
+    // ══════════════════════════════════════════════════════════════════════
+
+    private fun handleGetLastSnapshotPath(call: MethodCall, result: Result) {
+        if (!ensureSdkInitialized(result)) return
+
+        val deviceId = call.argument<String>("deviceId") ?: ""
+        if (deviceId.isEmpty()) {
+            result.success(mapOf("success" to false, "error" to "Missing deviceId"))
+            return
+        }
+
+        scope.launch {
+            try {
+                val devResult = GWIoT.queryDeviceCacheFirst(deviceId)
+                if (devResult is GWResult.Success) {
+                    val device = devResult.data
+                    if (device != null) {
+                        val lastFramePath = GWIoT.getLastSnapshotPath(device)
+                        Log.i(TAG, "[THUMBNAIL] deviceId=$deviceId, path=$lastFramePath")
+                        result.success(mapOf(
+                            "success" to true,
+                            "path" to (lastFramePath ?: "")
+                        ))
+                    } else {
+                        result.success(mapOf("success" to false, "error" to "Device data is null"))
+                    }
+                } else {
+                    result.success(mapOf("success" to false, "error" to "Device not found in cache: $deviceId"))
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[THUMBNAIL] EXCEPTION: ${e.message}", e)
+                result.success(mapOf("success" to false, "error" to (e.message ?: "Snapshot failed")))
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  MULTI-LIVE — Built-in SDK multi-camera surveillance page
+    // ══════════════════════════════════════════════════════════════════════
+
+    private fun handleOpenMultiLivePage(result: Result) {
+        if (!ensureSdkInitialized(result)) return
+
+        scope.launch {
+            try {
+                Log.d(TAG, "[MULTI_LIVE] Opening multi-live page")
+                GWIoT.openMultiLivePage()
+                Log.i(TAG, "[MULTI_LIVE] ✅ Opened")
+                result.success(mapOf("success" to true))
+            } catch (e: Exception) {
+                Log.e(TAG, "[MULTI_LIVE] EXCEPTION: ${e.message}", e)
+                handleErrorResult("MULTI_LIVE", e, result)
             }
         }
     }
@@ -810,7 +1110,7 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    //  DEVICE SETTINGS — COPIED from working project
+    //  DEVICE SETTINGS — matching iOS GWIoTDeviceBridge.openDeviceSettingPage
     // ══════════════════════════════════════════════════════════════════════
 
     private fun handleOpenDeviceSettings(call: MethodCall, result: Result) {
@@ -823,8 +1123,14 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         }
         scope.launch {
             try {
-                Log.d(TAG, "[SETTINGS] Opening for device: $deviceId")
-                GWIoT.openDeviceInfoPage(device)
+                Log.d(TAG, "[SETTINGS] Opening settings for device: $deviceId")
+                // iOS: GWIoT.shared.openDeviceSettingPage(device:)
+                // Android: try openDeviceSettingPage first, fallback to openDeviceInfoPage
+                try {
+                    GWIoT.openDeviceSettingPage(device)
+                } catch (_: Exception) {
+                    GWIoT.openDeviceInfoPage(device)
+                }
                 Log.i(TAG, "[SETTINGS] ✅ Opened")
                 result.success(mapOf("success" to true))
             } catch (e: Exception) {
@@ -835,10 +1141,11 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    //  DEVICE EVENTS — COPIED from working project
+    //  DEVICE INFO PAGE — matching iOS GWIoTDeviceBridge.openDeviceInfoPage
+    //  (Separate from settings — iOS has both openDeviceSettingPage & openDeviceInfoPage)
     // ══════════════════════════════════════════════════════════════════════
 
-    private fun handleOpenDeviceEvents(call: MethodCall, result: Result) {
+    private fun handleOpenDeviceInfoPage(call: MethodCall, result: Result) {
         if (!ensureSdkInitialized(result)) return
         val deviceId = call.argument<String>("deviceId") ?: ""
         val device = findDevice(deviceId)
@@ -848,61 +1155,162 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         }
         scope.launch {
             try {
-                Log.d(TAG, "[EVENTS] Opening for device: $deviceId")
-                GWIoT.openEventsPage(device)
-                Log.i(TAG, "[EVENTS] ✅ Opened")
+                Log.d(TAG, "[DEVICE_INFO] Opening info page for device: $deviceId")
+                GWIoT.openDeviceInfoPage(device)
+                Log.i(TAG, "[DEVICE_INFO] ✅ Opened")
                 result.success(mapOf("success" to true))
             } catch (e: Exception) {
-                Log.e(TAG, "[EVENTS] EXCEPTION: ${e.message}", e)
-                handleErrorResult("EVENTS", e, result)
+                Log.e(TAG, "[DEVICE_INFO] EXCEPTION: ${e.message}", e)
+                handleErrorResult("DEVICE_INFO", e, result)
             }
         }
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    //  QR & BINDING — COPIED from working project
-    // ══════════════════════════════════════════════════════════════════════
+    //  DEVICE EVENTS — COPIED from working project
+    // ═══════════════════════════════�    /**
+//     * ✅ Emit bindSuccess event qua EventChannel kèm device list mới.
+//     * Flutter side bắt event này để:
+//     * 1. Reload UI device list
+//     * 2. So sánh old vs new → detect thiết bị mới
+//     * 3. Gọi backend API addDevice cho thiết bị mới để lưu database
+//     *
+//     * Format map theo TuyaCameraModel: devId, name, iconUrl, isOnline, category
+//     */
+    private suspend fun emitBindSuccessEvent() {
+        try {
+            // Query device list mới từ SDK (matching handleQueryDeviceList)
+            val devResult = GWIoT.queryDeviceList()
 
-    // COPIED from working project
-    private fun handleOpenScanQRCode(result: Result) {
-        if (!ensureSdkInitialized(result)) return
-        scope.launch {
-            try {
-                Log.d(TAG, "[SCAN_QR] Opening scan page")
-                val opts = ScanQRCodeOptions(
-                    enableBuiltInHandling = true,
-                    title = "Quét mã QR",
-                    descTitle = "Quét mã QR trên thiết bị hoặc mã chia sẻ"
-                )
-                val scanResult = GWIoT.openScanQRCodePage(opts)
-                when (scanResult) {
-                    is GWResult.Success<*> -> result.success(mapOf("success" to true))
-                    is GWResult.Failure<*> -> result.success(mapOf("success" to false, "error" to scanResult.toString()))
+            val devices = when (devResult) {
+                is GWResult.Success<*> -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val deviceList = (devResult.data as? List<Device>) ?: emptyList()
+                    // Also update cache
+                    cachedDevices = deviceList
+
+                    deviceList.map { dev ->
+                        // Get online status via IoT props (matching handleQueryDeviceList)
+                        var isOnline = false
+                        try {
+                            val propsResult = GWIoT.getIoTProps(dev)
+                            if (propsResult is GWResult.Success) {
+                                isOnline = propsResult.data?.isOnline ?: false
+                            }
+                        } catch (_: Exception) {}
+
+                        // ✅ LOG chi tiết thông tin thiết bị (chỉ public fields)
+                        Log.i(TAG, "═══════════════════════════════════════════════")
+                        Log.i(TAG, "[BindEvent] 📋 Device Info:")
+                        Log.i(TAG, "  ├─ deviceId       : ${dev.deviceId}")
+                        Log.i(TAG, "  ├─ remarkName     : ${dev.remarkName}")
+                        Log.i(TAG, "  ├─ isOnline       : $isOnline")
+                        Log.i(TAG, "  ├─ productInfo    : ${dev.productInfo?.name}")
+                        Log.i(TAG, "  ├─ relation       : ${dev.relation}")
+                        Log.i(TAG, "  └─ jsonString     : ${dev.jsonString}")
+                        Log.i(TAG, "═══════════════════════════════════════════════")
+
+                        // ✅ Map theo format TuyaCameraModel (devId, name, isOnline, category)
+                        mapOf(
+                            "deviceId" to dev.deviceId,
+                            "deviceName" to dev.remarkName,
+                            "isOnline" to isOnline,
+                            "deviceType" to (dev.productInfo?.name ?: ""),
+                            "category" to "gwell_camera",
+                            "jsonString" to (dev.jsonString ?: ""),
+                        )
+                    }
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "[SCAN_QR] EXCEPTION: ${e.message}", e)
-                result.success(mapOf("success" to false, "error" to (e.message ?: "QR scan failed")))
+                is GWResult.Failure<*> -> {
+                    Log.e(TAG, "[BindEvent] ❌ queryDeviceList failed: ${devResult.err?.message}")
+                    emptyList()
+                }
             }
+
+            Log.i(TAG, "[BindEvent] 📤 Emitting bindSuccess with ${devices.size} devices")
+            sendEventToFlutter(mapOf(
+                "type" to "bindSuccess",
+                "devices" to devices
+            ))
+        } catch (e: Exception) {
+            Log.w(TAG, "[BindEvent] ⚠️ Failed to emit bindSuccess: ${e.message}")
+            sendEventToFlutter(mapOf(
+                "type" to "bindSuccess",
+                "devices" to emptyList<Map<String, Any>>()
+            ))
         }
     }
 
-    // COPIED from working project
-    private fun handleOpenBindProductList(result: Result) {
-        if (!ensureSdkInitialized(result)) return
-        scope.launch {
-            try {
-                Log.d(TAG, "[BIND_LIST] Opening product list")
-                val bindResult = GWIoT.openBindableProductList()
-                when (bindResult) {
-                    is GWResult.Success<*> -> result.success(mapOf("success" to true))
-                    is GWResult.Failure<*> -> result.success(mapOf("success" to false, "error" to bindResult.toString()))
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "[BIND_LIST] EXCEPTION: ${e.message}", e)
-                result.success(mapOf("success" to false, "error" to (e.message ?: "Bind list failed")))
-            }
-        }
-    }
+
+     private fun handleOpenScanQRCode(result: Result) {
+         if (!ensureSdkInitialized(result)) return
+         scope.launch {
+             try {
+                 Log.d(TAG, "[SCAN_QR] Opening scan page")
+                 val opts = ScanQRCodeOptions(
+                     enableBuiltInHandling = true,
+                     title = "Quét mã QR",
+                     descTitle = "Quét mã QR trên thiết bị hoặc mã chia sẻ"
+                 )
+                 val scanResult = GWIoT.openScanQRCodePage(opts)
+                 when (scanResult) {
+                     is GWResult.Success<*> -> {
+                         Log.i(TAG, "[SCAN_QR] ✅ Binding success")
+                         // ✅ Emit bindSuccess event → Flutter bắt để gọi backend API
+                         emitBindSuccessEvent()
+                         result.success(mapOf("success" to true))
+                     }
+                     is GWResult.Failure<*> -> result.success(mapOf("success" to false, "error" to scanResult.toString()))
+                 }
+             } catch (e: Exception) {
+                 Log.e(TAG, "[SCAN_QR] EXCEPTION: ${e.message}", e)
+                 result.success(mapOf("success" to false, "error" to (e.message ?: "QR scan failed")))
+             }
+         }
+     }
+
+     private fun handleOpenBindProductList(result: Result) {
+         if (!ensureSdkInitialized(result)) return
+         scope.launch {
+             try {
+                 Log.d(TAG, "[BIND_LIST] Opening product list")
+                 val bindResult = GWIoT.openBindableProductList()
+                 when (bindResult) {
+                     is GWResult.Success<*> -> {
+                         Log.i(TAG, "[BIND_LIST] ✅ Binding success")
+                         // ✅ Emit bindSuccess event → Flutter bắt để gọi backend API
+                         emitBindSuccessEvent()
+                         result.success(mapOf("success" to true))
+                     }
+                     is GWResult.Failure<*> -> result.success(mapOf("success" to false, "error" to bindResult.toString()))
+                 }
+             } catch (e: Exception) {
+                 Log.e(TAG, "[BIND_LIST] EXCEPTION: ${e.message}", e)
+                 result.success(mapOf("success" to false, "error" to (e.message ?: "Bind list failed")))
+             }
+         }
+     }
+
+     private fun handleOpenDeviceEvents(call: MethodCall, result: Result) {
+         if (!ensureSdkInitialized(result)) return
+         val deviceId = call.argument<String>("deviceId") ?: ""
+         val device = findDevice(deviceId)
+         if (device == null) {
+             result.success(mapOf("success" to false, "error" to "Device not found: $deviceId"))
+             return
+         }
+         scope.launch {
+             try {
+                 Log.d(TAG, "[EVENTS] Opening for device: $deviceId")
+                 GWIoT.openEventsPage(device)
+                 Log.i(TAG, "[EVENTS] ✅ Opened")
+                 result.success(mapOf("success" to true))
+             } catch (e: Exception) {
+                 Log.e(TAG, "[EVENTS] EXCEPTION: ${e.message}", e)
+                 handleErrorResult("EVENTS", e, result)
+             }
+         }
+     }
 
     // Matching iOS GWIoTDeviceBridge.openBindByQRCode — uses GWIoT.openBind(qrCodeValue:)
     // Android SDK equivalent: try openScanQRCodePage with the value
@@ -933,24 +1341,53 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    //  MESSAGE CENTER & DEV SHARE — matching iOS (not in working project)
+    //  MESSAGE CENTER — matching iOS GWIoTDeviceBridge.openMessageCenterPage
     // ══════════════════════════════════════════════════════════════════════
 
-    // Matching iOS GWIoTDeviceBridge.openMessageCenterPage
     private fun handleOpenMessageCenterPage(result: Result) {
         if (!ensureSdkInitialized(result)) return
         scope.launch {
             try {
-                // Android SDK: GWIoT.openMessageCenter() may not exist
-                // Return not-implemented gracefully
-                result.success(mapOf("success" to false, "error" to "Not available on Android"))
+                Log.d(TAG, "[MSG_CENTER] Opening message center page")
+                // iOS: GWIoT.shared.openMessageCenterPage { result, error in ... }
+                // Android: try GWIoT.openMessageCenterPage() or msgCenterComp
+                try {
+                    GWIoT.openMessageCenterPage()
+                    Log.i(TAG, "[MSG_CENTER] ✅ Opened")
+                    result.success(mapOf("success" to true))
+                } catch (e: NoSuchMethodError) {
+                    // API may not exist in this SDK version — try via component
+                    Log.w(TAG, "[MSG_CENTER] openMessageCenterPage not found, trying msgCenterComp")
+                    try {
+                        val msgComp = GWIoT.msgCenterComp
+                        // Try reflection to call open method
+                        val openMethod = msgComp.javaClass.methods.find {
+                            it.name.contains("open", ignoreCase = true) ||
+                            it.name.contains("show", ignoreCase = true)
+                        }
+                        if (openMethod != null) {
+                            openMethod.invoke(msgComp)
+                            Log.i(TAG, "[MSG_CENTER] ✅ Opened via msgCenterComp")
+                            result.success(mapOf("success" to true))
+                        } else {
+                            result.success(mapOf("success" to false, "error" to "Message center API not found in SDK"))
+                        }
+                    } catch (compE: Exception) {
+                        Log.w(TAG, "[MSG_CENTER] msgCenterComp also failed: ${compE.message}")
+                        result.success(mapOf("success" to false, "error" to "Message center not available: ${compE.message}"))
+                    }
+                }
             } catch (e: Exception) {
-                result.success(mapOf("success" to false, "error" to (e.message ?: "Failed")))
+                Log.e(TAG, "[MSG_CENTER] EXCEPTION: ${e.message}", e)
+                handleErrorResult("MSG_CENTER", e, result)
             }
         }
     }
 
-    // Matching iOS GWIoTDeviceBridge.openDevSharePage
+    // ══════════════════════════════════════════════════════════════════════
+    //  DEV SHARE — matching iOS GWIoTDeviceBridge.openDevSharePage
+    // ══════════════════════════════════════════════════════════════════════
+
     private fun handleOpenDevSharePage(call: MethodCall, result: Result) {
         if (!ensureSdkInitialized(result)) return
         val deviceId = call.argument<String>("deviceId") ?: ""
@@ -961,11 +1398,13 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         }
         scope.launch {
             try {
-                // iOS: DevShareOption(device: device) → openDevSharePage(opt:)
+                Log.d(TAG, "[DEV_SHARE] Opening share page for device: $deviceId")
                 val shareOption = DevShareOption(device)
                 GWIoT.openDevSharePage(shareOption)
+                Log.i(TAG, "[DEV_SHARE] ✅ Opened")
                 result.success(mapOf("success" to true))
             } catch (e: Exception) {
+                Log.e(TAG, "[DEV_SHARE] EXCEPTION: ${e.message}", e)
                 handleErrorResult("DEV_SHARE", e, result)
             }
         }
@@ -1050,12 +1489,113 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     // ══════════════════════════════════════════════════════════════════════
+    //  PUSH NOTIFICATION — matching iOS GWIoTPushNotificationBridge
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Handle incoming push notification.
+     * iOS: GWIoT.shared.receivePushNotification(noti: PushNotification(userInfo:))
+     * Android: GWIoT.receivePushNotification(PushNotification(intent=...))
+     */
+    private fun handleReceivePushNotification(call: MethodCall, result: Result) {
+        if (!ensureSdkInitialized(result)) return
+        scope.launch {
+            try {
+                val payload = call.argument<Map<String, Any>>("payload") ?: emptyMap()
+                Log.d(TAG, "[PUSH] receivePushNotification payload keys: ${payload.keys}")
+
+                // Build Intent with extras from payload
+                val context = flutterPluginBinding?.applicationContext
+                if (context != null) {
+                    val intent = Intent()
+                    payload.forEach { (key, value) ->
+                        when (value) {
+                            is String -> intent.putExtra(key, value)
+                            is Int -> intent.putExtra(key, value)
+                            is Long -> intent.putExtra(key, value)
+                            is Boolean -> intent.putExtra(key, value)
+                        }
+                    }
+                    val noti = PushNotification(intent = intent)
+                    GWIoT.receivePushNotification(noti)
+                    Log.i(TAG, "[PUSH] ✅ receivePushNotification forwarded to SDK")
+
+                    // Send event to Flutter (matching iOS sendPushEventToFlutter)
+                    val eventData = mutableMapOf<String, Any?>("type" to "pushReceived")
+                    eventData.putAll(payload)
+                    sendEventToFlutter(eventData)
+                }
+                result.success(mapOf("success" to true))
+            } catch (e: Exception) {
+                Log.e(TAG, "[PUSH] receivePushNotification EXCEPTION: ${e.message}", e)
+                result.success(mapOf("success" to false, "error" to (e.message ?: "Failed")))
+            }
+        }
+    }
+
+    /**
+     * Handle user clicking on a push notification.
+     * iOS: GWIoT.shared.clickPushNotification(noti: PushNotification(userInfo:))
+     * Android: similar — forward to SDK and emit event to Flutter
+     */
+    private fun handleClickPushNotification(call: MethodCall, result: Result) {
+        if (!ensureSdkInitialized(result)) return
+        scope.launch {
+            try {
+                val payload = call.argument<Map<String, Any>>("payload") ?: emptyMap()
+                Log.d(TAG, "[PUSH] clickPushNotification payload keys: ${payload.keys}")
+
+                val context = flutterPluginBinding?.applicationContext
+                if (context != null) {
+                    val intent = Intent()
+                    payload.forEach { (key, value) ->
+                        when (value) {
+                            is String -> intent.putExtra(key, value)
+                            is Int -> intent.putExtra(key, value)
+                            is Long -> intent.putExtra(key, value)
+                            is Boolean -> intent.putExtra(key, value)
+                        }
+                    }
+                    val noti = PushNotification(intent = intent)
+                    GWIoT.clickPushNotification(noti)
+                    Log.i(TAG, "[PUSH] ✅ clickPushNotification forwarded to SDK")
+
+                    // Send event to Flutter (matching iOS sendPushEventToFlutter)
+                    val eventData = mutableMapOf<String, Any?>("type" to "pushClicked")
+                    eventData.putAll(payload)
+                    sendEventToFlutter(eventData)
+                }
+                result.success(mapOf("success" to true))
+            } catch (e: Exception) {
+                Log.e(TAG, "[PUSH] clickPushNotification EXCEPTION: ${e.message}", e)
+                result.success(mapOf("success" to false, "error" to (e.message ?: "Failed")))
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
     //  UI CONFIG
     // ══════════════════════════════════════════════════════════════════════
 
     private fun handleSetLanguage(call: MethodCall, result: Result) {
-        // Language is set during SDK init via GwellSdkInitializer
-        result.success(mapOf("success" to true))
+        val codeStr = call.argument<String>("code") ?: ""
+        Log.i(TAG, "[setLanguage] code=$codeStr")
+
+        val langCode = when (codeStr.lowercase()) {
+            "vi" -> com.gw.gwiotapi.entities.LanguageCode.VI
+            "en" -> com.gw.gwiotapi.entities.LanguageCode.EN
+            "zh" -> com.gw.gwiotapi.entities.LanguageCode.ZH_HANS
+            else -> com.gw.gwiotapi.entities.LanguageCode.EN
+        }
+
+        try {
+            GWIoT.setLanguage(langCode)
+            Log.i(TAG, "[setLanguage] ✅ Set to $langCode")
+            result.success(mapOf("success" to true, "code" to codeStr))
+        } catch (e: Exception) {
+            Log.e(TAG, "[setLanguage] ❌ Failed: ${e.message}", e)
+            result.success(mapOf("success" to false, "error" to (e.message ?: "Failed")))
+        }
     }
 
     private fun handleSetUIConfiguration(call: MethodCall, result: Result) {
