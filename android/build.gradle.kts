@@ -144,7 +144,7 @@ dependencies {
         exclude(group = "com.gwell", module = "gwiotapi")
         exclude(group = "com.tencentcs", module = "txtraevoip")
         // Fix duplicate classes/resources
-        exclude(group = "cn.aigestudio.wheelpicker")
+//        exclude(group = "cn.aigestudio.wheelpicker")
         exclude(group = "com.contrarywind")
         exclude(group = "com.eightbitlab", module = "blurview")
         exclude(group = "com.yoosee.gw_plugin_hub", module = "lib_m3u8manger")
@@ -156,7 +156,7 @@ dependencies {
         exclude(group = "com.contrarywind")
         exclude(group = "com.eightbitlab", module = "blurview")
     }
-
+    implementation("cn.aigestudio.wheelpicker:WheelPicker:1.1.3")
     // AndroidX
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
