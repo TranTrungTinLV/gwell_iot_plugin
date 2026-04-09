@@ -1,11 +1,17 @@
 name: gwell_iot_plugin
 description: Flutter plugin for Gwell IoT SDK (C2C mode) - camera live view, playback, device management.
 version: 1.0.0
-
+homepage: https://github.com/TranTrungTinLV/gwell_iot_plugin  # hoặc URL project
+repository: https://github.com/TranTrungTinLV/gwell_iot_plugin
+issue_tracker: https://github.com/TranTrungTinLV/gwell_iot_plugin/issues
 environment:
   sdk: ^3.7.0
   flutter: ">=3.29.0"
-
+topics:
+  - camera
+  - iot
+  - android
+  - gwell
 dependencies:
   flutter:
     sdk: flutter

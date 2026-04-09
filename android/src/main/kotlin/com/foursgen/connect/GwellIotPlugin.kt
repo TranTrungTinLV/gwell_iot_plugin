@@ -821,7 +821,7 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventCha
         try {
             val isDarkMode = call.argument<Boolean>("isDarkMode") ?: false
             val brandColor = call.argument<String>("brandColor") ?: "#FF4CAF50"
-            val appName = call.argument<String>("appName") ?: "4SGen Connect"
+            val appName = call.argument<String>("appName") ?: "Gwell IoT"
 
             // Default color palettes
             val defaultLight = mapOf(

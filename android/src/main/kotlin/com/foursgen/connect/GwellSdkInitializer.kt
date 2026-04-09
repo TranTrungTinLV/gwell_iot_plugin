@@ -59,7 +59,7 @@ object GwellSdkInitializer {
         try {
             if (FirebaseApp.getApps(app).isEmpty()) {
                 val options = FirebaseOptions.Builder()
-                    .setProjectId("foursgen-connect")
+                    .setProjectId("gwell-iot-plugin-dummy")
                     .setApplicationId("1:000000000000:android:0000000000000000")
                     .setApiKey("AIzaSyDummyKeyForGwellSdkInit")
                     .build()
@@ -142,7 +142,7 @@ object GwellSdkInitializer {
         GWIoT.setUIConfiguration(
             UIConfiguration(
                 theme = Theme(),
-                texts = AppTexts(appNamePlaceHolder = "4SGen Connect")
+                texts = AppTexts(appNamePlaceHolder = "Gwell IoT")
             )
         )
 

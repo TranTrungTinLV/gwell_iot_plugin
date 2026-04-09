@@ -1,0 +1,5 @@
+# Gwell Nexus Repository Credentials
+# Copy this file to gradle.properties and fill in your credentials.
+# DO NOT commit gradle.properties to version control!
+GWIOT_NEXUS_USERNAME=your_nexus_username
+GWIOT_NEXUS_PASSWORD=your_nexus_password

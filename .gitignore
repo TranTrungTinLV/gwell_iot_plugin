@@ -4,3 +4,7 @@ build/
 pubspec.lock
 *.iml
 .idea/
+
+# Android credentials & build cache
+android/gradle.properties
+android/.gradle/

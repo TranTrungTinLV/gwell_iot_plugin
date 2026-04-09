@@ -103,19 +103,22 @@ android {
 }
 
 repositories {
+    val nexusUsername = project.findProperty("GWIOT_NEXUS_USERNAME")?.toString() ?: ""
+    val nexusPassword = project.findProperty("GWIOT_NEXUS_PASSWORD")?.toString() ?: ""
+
     maven {
         url = uri("${GWIOT_NEXUS_BASE_URL}/maven-releases/")
         credentials {
-            username = "iptime_eti_user"
-            password = "6S1Moa^HFaL!rEqQC"
+            username = nexusUsername
+            password = nexusPassword
         }
         isAllowInsecureProtocol = true
     }
     maven {
         url = uri("${GWIOT_NEXUS_BASE_URL}/maven-gwiot/")
         credentials {
-            username = "iptime_eti_user"
-            password = "6S1Moa^HFaL!rEqQC"
+            username = nexusUsername
+            password = nexusPassword
         }
         isAllowInsecureProtocol = true
     }

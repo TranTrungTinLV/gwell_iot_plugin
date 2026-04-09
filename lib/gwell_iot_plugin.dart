@@ -90,7 +90,7 @@ class GwellIotPlugin {
   static Map<String, dynamic> _asMap(dynamic raw) {
     if (raw == null) return <String, dynamic>{};
     if (raw is Map) return Map<String, dynamic>.from(raw);
-    debugPrint("rawwwwwww::::::${raw}");
+
     return <String, dynamic>{};
   }
 
@@ -221,7 +221,7 @@ class GwellIotPlugin {
     final result = await getDeviceList();
     if (result['success'] == true) {
       final rawDevices = result['devices'];
-      debugPrint("rawDevices:::::${rawDevices}");
+
       if (rawDevices is List) {
         return rawDevices.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
       }

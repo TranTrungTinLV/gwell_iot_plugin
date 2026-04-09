@@ -18,8 +18,7 @@ In your project's `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  gwell_iot_plugin:
-    path: ../gwell_iot_plugin   # adjust path as needed
+  gwell_iot_plugin: ^1.0.0
 ```
 
 Then run:
@@ -30,14 +29,20 @@ flutter pub get
 
 ### 2. Add Gwell credentials
 
-In your project's `android/gradle.properties`, add:
+Copy the template file and fill in your credentials:
+
+```bash
+cp android/gradle.properties.example android/gradle.properties
+```
+
+Edit `android/gradle.properties` with your actual Nexus credentials:
 
 ```properties
 GWIOT_NEXUS_USERNAME=your_nexus_username
 GWIOT_NEXUS_PASSWORD=your_nexus_password
 ```
 
-> ⚠️ Add `gradle.properties` to `.gitignore` if it contains sensitive credentials.
+> ⚠️ `gradle.properties` is already in `.gitignore`. Never commit it to version control.
 
 ### 3. Add Gwell Maven repos
 
@@ -47,15 +52,14 @@ In your project's `android/settings.gradle.kts`, add Gwell repos inside `depende
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
     repositories {
-        // ... your existing repos (Tuya, Google, etc.) ...
+        // ... your existing repos (Google, etc.) ...
 
         // ── Gwell repos (required) ──
         val nexusUsername = extra.properties["GWIOT_NEXUS_USERNAME"]?.toString() ?: ""
         val nexusPassword = extra.properties["GWIOT_NEXUS_PASSWORD"]?.toString() ?: ""
-        val GWIOT_NEXUS_BASE_URL = "https://nexus-sg.gwell.cc/nexus/repository/"
 
         maven {
-            url = uri("${GWIOT_NEXUS_BASE_URL}/maven-releases/")
+            url = uri("https://nexus-sg.gwell.cc/nexus/repository/maven-releases/")
             credentials {
                 username = nexusUsername
                 password = nexusPassword
@@ -63,7 +67,7 @@ dependencyResolutionManagement {
             isAllowInsecureProtocol = true
         }
         maven {
-            url = uri("${GWIOT_NEXUS_BASE_URL}/maven-gwiot/")
+            url = uri("https://nexus-sg.gwell.cc/nexus/repository/maven-gwiot/")
             credentials {
                 username = nexusUsername
                 password = nexusPassword
@@ -78,6 +82,7 @@ dependencyResolutionManagement {
     }
 }
 ```
+
 
 ### 3. Add JNI pickFirsts (if conflicts)
 
