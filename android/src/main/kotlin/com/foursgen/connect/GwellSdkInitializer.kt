@@ -136,12 +136,13 @@ object GwellSdkInitializer {
 
         GWIoT.initialize(option)
 
+        // Set default UI configuration immediately after init (matching demo pattern).
+        // This provides the SDK a base theme config. Flutter will override with
+        // correct dark/light colors via setUIConfiguration MethodChannel after login.
         GWIoT.setUIConfiguration(
             UIConfiguration(
                 theme = Theme(),
-                texts = AppTexts(
-                    appNamePlaceHolder = "4SGen Connect"
-                )
+                texts = AppTexts(appNamePlaceHolder = "4SGen Connect")
             )
         )
 

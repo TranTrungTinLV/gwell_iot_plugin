@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.appcompat.app.AppCompatDelegate
 import com.gw.gwiotapi.GWIoT
 import com.gw.gwiotapi.entities.AppTexts
 import com.gw.gwiotapi.entities.DevShareOption
@@ -818,15 +819,113 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventCha
 
     private fun handleSetUIConfiguration(call: MethodCall, result: Result) {
         try {
-            GWIoT.setUIConfiguration(UIConfiguration(
-                theme = Theme(),
-                texts = AppTexts(appNamePlaceHolder = "4SGen Connect")
-            ))
+            val isDarkMode = call.argument<Boolean>("isDarkMode") ?: false
+            val brandColor = call.argument<String>("brandColor") ?: "#FF4CAF50"
+            val appName = call.argument<String>("appName") ?: "4SGen Connect"
+
+            // Default color palettes
+            val defaultLight = mapOf(
+                "brand" to brandColor,
+                "brandHighlight" to "#FF66BB6A",
+                "brandDisable" to "#FF81C784",
+                "brand2" to "#FF2196F3",
+                "brand2Highlight" to "#FF42A5F5",
+                "brand2Disable" to "#FF90CAF9",
+                "text" to "#FF212121",
+                "secondaryText" to "#FF757575",
+                "tertiaryText" to "#FF9E9E9E",
+                "lightText" to "#FFFFFFFF",
+                "linkText" to "#FF1976D2",
+                "mainBackground" to "#FFFFFFFF",
+                "secondaryBackground" to "#FFF5F5F5",
+                "maskBackground" to "#80000000",
+                "hudBackground" to "#CC000000",
+                "separatorLine" to "#FFE0E0E0",
+                "inputLineEnable" to brandColor,
+                "inputLineDisable" to "#FFBDBDBD",
+                "stateSafe" to "#FF4CAF50",
+                "stateWarning" to "#FFFFC107",
+                "stateError" to "#FFF44336",
+            )
+
+            val defaultDark = mapOf(
+                "brand" to brandColor,
+                "brandHighlight" to "#FF66BB6A",
+                "brandDisable" to "#FF388E3C",
+                "brand2" to "#FF2196F3",
+                "brand2Highlight" to "#FF42A5F5",
+                "brand2Disable" to "#FF1565C0",
+                "text" to "#FFFFFFFF",
+                "secondaryText" to "#B3FFFFFF",
+                "tertiaryText" to "#80FFFFFF",
+                "lightText" to "#FFFFFFFF",
+                "linkText" to "#FF64B5F6",
+                "mainBackground" to "#FF121212",
+                "secondaryBackground" to "#FF1E1E1E",
+                "maskBackground" to "#80000000",
+                "hudBackground" to "#CC333333",
+                "separatorLine" to "#FF333333",
+                "inputLineEnable" to brandColor,
+                "inputLineDisable" to "#FF555555",
+                "stateSafe" to "#FF4CAF50",
+                "stateWarning" to "#FFFFC107",
+                "stateError" to "#FFF44336",
+            )
+
+            val defaults = if (isDarkMode) defaultDark else defaultLight
+
+            // Flutter args override defaults
+            fun color(key: String): String =
+                call.argument<String>(key) ?: defaults[key] ?: "#FF000000"
+
+            val uiConfig = UIConfiguration(
+                theme = Theme(
+                    colors = Theme.Colors(
+                        brand = color("brandColor"),
+                        brandHighlight = color("brandHighlight"),
+                        brandDisable = color("brandDisable"),
+                        brand2 = color("brand2"),
+                        brand2Highlight = color("brand2Highlight"),
+                        brand2Disable = color("brand2Disable"),
+                        text = color("textColor"),
+                        secondaryText = color("secondaryTextColor"),
+                        tertiaryText = color("tertiaryTextColor"),
+                        lightText = color("lightTextColor"),
+                        linkText = color("linkTextColor"),
+                        mainBackground = color("mainBackground"),
+                        secondaryBackground = color("secondaryBackground"),
+                        maskBackground = color("maskBackground"),
+                        hudBackground = color("hudBackground"),
+                        separatorLine = color("separatorLineColor"),
+                        inputLineEnable = color("inputLineEnable"),
+                        inputLineDisable = color("inputLineDisable"),
+                        stateSafe = color("stateSafe"),
+                        stateWarning = color("stateWarning"),
+                        stateError = color("stateError"),
+                    )
+                ),
+                texts = AppTexts(appNamePlaceHolder = appName)
+            )
+            // 1. Tell Android's AppCompat system to switch DayNight mode
+            //    This is CRITICAL — without it, DayNight theme resources won't switch
+            //    for any AppCompatActivity (including all Gwell SDK pages).
+            val nightMode = if (isDarkMode) {
+                AppCompatDelegate.MODE_NIGHT_YES
+            } else {
+                AppCompatDelegate.MODE_NIGHT_NO
+            }
+            AppCompatDelegate.setDefaultNightMode(nightMode)
+
+            // 2. Apply color palette to Gwell SDK
+            GWIoT.setUIConfiguration(uiConfig)
+            Log.i(TAG, "[UI_CONFIG] ✅ Theme set: isDarkMode=$isDarkMode, nightMode=$nightMode")
             result.success(mapOf("success" to true))
         } catch (e: Exception) {
+            Log.e(TAG, "[UI_CONFIG] ❌ FAILED: ${e.message}", e)
             result.success(mapOf("success" to false, "error" to (e.message ?: "Failed")))
         }
     }
+
 
     // ══════════════════════════════════════════════════════════════════════
     //  HELPERS

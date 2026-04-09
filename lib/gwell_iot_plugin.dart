@@ -30,46 +30,34 @@ class GwellIotPlugin {
   /// - `pushReceived`: {type, ...payload}
   /// - `pushClicked`: {type, ...payload}
   static Stream<Map<String, dynamic>> get events {
-    return _eventChannel
-        .receiveBroadcastStream()
-        .map((event) => Map<String, dynamic>.from(event as Map));
+    return _eventChannel.receiveBroadcastStream().map((event) => Map<String, dynamic>.from(event as Map));
   }
 
   /// Stream of login status changes.
   /// Emits `{type: 'loginStatusChanged', isLoggedIn: bool}`
   static Stream<bool> get loginStatusStream {
-    return events
-        .where((e) => e['type'] == 'loginStatusChanged')
-        .map((e) => e['isLoggedIn'] as bool? ?? false);
+    return events.where((e) => e['type'] == 'loginStatusChanged').map((e) => e['isLoggedIn'] as bool? ?? false);
   }
 
   /// Stream of device list updates.
   /// Emits `{type: 'deviceListUpdated', devices: List<Map>}`
   static Stream<List<Map<String, dynamic>>> get deviceListStream {
-    return events
-        .where((e) => e['type'] == 'deviceListUpdated')
-        .map((e) {
+    return events.where((e) => e['type'] == 'deviceListUpdated').map((e) {
       final devices = e['devices'] as List? ?? [];
-      return devices
-          .map((d) => Map<String, dynamic>.from(d as Map))
-          .toList();
+      return devices.map((d) => Map<String, dynamic>.from(d as Map)).toList();
     });
   }
 
   /// Stream that emits when SDK token expires (login -> not logged in).
   /// Use this to trigger re-authentication.
   static Stream<void> get tokenExpiredStream {
-    return events
-        .where((e) => e['type'] == 'tokenExpired')
-        .map((_) {});
+    return events.where((e) => e['type'] == 'tokenExpired').map((_) {});
   }
 
   /// Stream of account events from SDK.
   /// Emits event description string.
   static Stream<String> get accountEventStream {
-    return events
-        .where((e) => e['type'] == 'accountEvent')
-        .map((e) => e['event'] as String? ?? '');
+    return events.where((e) => e['type'] == 'accountEvent').map((e) => e['event'] as String? ?? '');
   }
 
   /// Stream of bind events (success, failed, cancelled).
@@ -77,9 +65,7 @@ class GwellIotPlugin {
   static Stream<Map<String, dynamic>> get bindEventStream {
     return events.where((e) {
       final type = e['type'] as String? ?? '';
-      return type == 'bindSuccess' ||
-          type == 'bindFailed' ||
-          type == 'bindCancelled';
+      return type == 'bindSuccess' || type == 'bindFailed' || type == 'bindCancelled';
     });
   }
 
@@ -88,9 +74,7 @@ class GwellIotPlugin {
   static Stream<Map<String, dynamic>> get deviceEventStream {
     return events.where((e) {
       final type = e['type'] as String? ?? '';
-      return type == 'deviceDeleted' ||
-          type == 'deviceNameChanged' ||
-          type == 'sharingDeviceAccepted';
+      return type == 'deviceDeleted' || type == 'deviceNameChanged' || type == 'sharingDeviceAccepted';
     });
   }
 
@@ -239,10 +223,7 @@ class GwellIotPlugin {
       final rawDevices = result['devices'];
       debugPrint("rawDevices:::::${rawDevices}");
       if (rawDevices is List) {
-        return rawDevices
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
+        return rawDevices.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
       }
     }
     return const <Map<String, dynamic>>[];
@@ -254,9 +235,7 @@ class GwellIotPlugin {
   /// Returns {success: true, path: '/path/to/image'} or {success: false, error: '...'}.
   static Future<String?> getLastSnapshotPath(String deviceId) async {
     try {
-      final result = await _channel.invokeMethod('getLastSnapshotPath', {
-        'deviceId': deviceId,
-      });
+      final result = await _channel.invokeMethod('getLastSnapshotPath', {'deviceId': deviceId});
       final map = _asMap(result);
       if (map['success'] == true) {
         final path = map['path'] as String?;
@@ -275,9 +254,7 @@ class GwellIotPlugin {
   /// Matches iOS `openDeviceHome`.
   static Future<Map<String, dynamic>> openDeviceHome(String deviceId) async {
     try {
-      final result = await _channel.invokeMethod('openDeviceHome', {
-        'deviceId': deviceId,
-      });
+      final result = await _channel.invokeMethod('openDeviceHome', {'deviceId': deviceId});
       return _asMap(result);
     } on PlatformException catch (e) {
       return {'success': false, 'error': e.message ?? 'Live view failed'};
@@ -285,8 +262,7 @@ class GwellIotPlugin {
   }
 
   /// Alias for [openDeviceHome].
-  static Future<Map<String, dynamic>> openLiveView(String deviceId) =>
-      openDeviceHome(deviceId);
+  static Future<Map<String, dynamic>> openLiveView(String deviceId) => openDeviceHome(deviceId);
 
   /// Open built-in multi-camera surveillance page (多设备同屏).
   /// Shows all devices in a grid with live streams.
@@ -298,12 +274,11 @@ class GwellIotPlugin {
       return {'success': false, 'error': e.message ?? 'Multi-live failed'};
     }
   }
+
   /// Open playback for a device (SDK built-in UI).
   static Future<Map<String, dynamic>> openPlayback(String deviceId) async {
     try {
-      final result = await _channel.invokeMethod('openPlayback', {
-        'deviceId': deviceId,
-      });
+      final result = await _channel.invokeMethod('openPlayback', {'deviceId': deviceId});
       return _asMap(result);
     } on PlatformException catch (e) {
       return {'success': false, 'error': e.message ?? 'Playback failed'};
@@ -311,10 +286,7 @@ class GwellIotPlugin {
   }
 
   /// Open playback with specific start time.
-  static Future<Map<String, dynamic>> openPlaybackWithTime({
-    required String deviceId,
-    required int startTime,
-  }) async {
+  static Future<Map<String, dynamic>> openPlaybackWithTime({required String deviceId, required int startTime}) async {
     try {
       final result = await _channel.invokeMethod('openPlaybackWithTime', {
         'deviceId': deviceId,
@@ -327,20 +299,12 @@ class GwellIotPlugin {
   }
 
   /// Check cloud playback permission for a device.
-  static Future<Map<String, dynamic>> getCloudPlaybackPermission(
-      String deviceId) async {
+  static Future<Map<String, dynamic>> getCloudPlaybackPermission(String deviceId) async {
     try {
-      final result =
-          await _channel.invokeMethod('getCloudPlaybackPermission', {
-        'deviceId': deviceId,
-      });
+      final result = await _channel.invokeMethod('getCloudPlaybackPermission', {'deviceId': deviceId});
       return _asMap(result);
     } on PlatformException catch (e) {
-      return {
-        'success': false,
-        'hasPermission': false,
-        'error': e.message ?? 'Failed'
-      };
+      return {'success': false, 'hasPermission': false, 'error': e.message ?? 'Failed'};
     }
   }
 
@@ -367,15 +331,12 @@ class GwellIotPlugin {
   }
 
   /// Alias for [openProductList].
-  static Future<Map<String, dynamic>> openBindProductList() =>
-      openProductList();
+  static Future<Map<String, dynamic>> openBindProductList() => openProductList();
 
   /// Open bind flow with QR value.
   static Future<Map<String, dynamic>> openBindByQRCode(String qrValue) async {
     try {
-      final result = await _channel.invokeMethod('openBindByQRCode', {
-        'qrValue': qrValue,
-      });
+      final result = await _channel.invokeMethod('openBindByQRCode', {'qrValue': qrValue});
       return _asMap(result);
     } on PlatformException catch (e) {
       return {'success': false, 'error': e.message ?? 'Bind failed'};
@@ -385,12 +346,9 @@ class GwellIotPlugin {
   // ── Device Pages ──────────────────────────────────────────────────────
 
   /// Open device settings page (SDK built-in UI).
-  static Future<Map<String, dynamic>> openDeviceSettingPage(
-      String deviceId) async {
+  static Future<Map<String, dynamic>> openDeviceSettingPage(String deviceId) async {
     try {
-      final result = await _channel.invokeMethod('openDeviceSettingPage', {
-        'deviceId': deviceId,
-      });
+      final result = await _channel.invokeMethod('openDeviceSettingPage', {'deviceId': deviceId});
       return _asMap(result);
     } on PlatformException catch (e) {
       return {'success': false, 'error': e.message ?? 'Settings failed'};
@@ -398,16 +356,12 @@ class GwellIotPlugin {
   }
 
   /// Alias for [openDeviceSettingPage].
-  static Future<Map<String, dynamic>> openDeviceSettings(String deviceId) =>
-      openDeviceSettingPage(deviceId);
+  static Future<Map<String, dynamic>> openDeviceSettings(String deviceId) => openDeviceSettingPage(deviceId);
 
   /// Open device info page (SDK built-in UI).
-  static Future<Map<String, dynamic>> openDeviceInfoPage(
-      String deviceId) async {
+  static Future<Map<String, dynamic>> openDeviceInfoPage(String deviceId) async {
     try {
-      final result = await _channel.invokeMethod('openDeviceInfoPage', {
-        'deviceId': deviceId,
-      });
+      final result = await _channel.invokeMethod('openDeviceInfoPage', {'deviceId': deviceId});
       return _asMap(result);
     } on PlatformException catch (e) {
       return {'success': false, 'error': e.message ?? 'Info failed'};
@@ -417,9 +371,7 @@ class GwellIotPlugin {
   /// Open events/alerts page (SDK built-in UI).
   static Future<Map<String, dynamic>> openEventsPage(String deviceId) async {
     try {
-      final result = await _channel.invokeMethod('openEventsPage', {
-        'deviceId': deviceId,
-      });
+      final result = await _channel.invokeMethod('openEventsPage', {'deviceId': deviceId});
       return _asMap(result);
     } on PlatformException catch (e) {
       return {'success': false, 'error': e.message ?? 'Events failed'};
@@ -427,8 +379,7 @@ class GwellIotPlugin {
   }
 
   /// Alias for [openEventsPage].
-  static Future<Map<String, dynamic>> openDeviceEvents(String deviceId) =>
-      openEventsPage(deviceId);
+  static Future<Map<String, dynamic>> openDeviceEvents(String deviceId) => openEventsPage(deviceId);
 
   /// Open message center page (SDK built-in UI).
   static Future<Map<String, dynamic>> openMessageCenterPage() async {
@@ -436,19 +387,14 @@ class GwellIotPlugin {
       final result = await _channel.invokeMethod('openMessageCenterPage');
       return _asMap(result);
     } on PlatformException catch (e) {
-      return {
-        'success': false,
-        'error': e.message ?? 'Message center failed'
-      };
+      return {'success': false, 'error': e.message ?? 'Message center failed'};
     }
   }
 
   /// Open device share page (SDK built-in UI).
   static Future<Map<String, dynamic>> openDevSharePage(String deviceId) async {
     try {
-      final result = await _channel.invokeMethod('openDevSharePage', {
-        'deviceId': deviceId,
-      });
+      final result = await _channel.invokeMethod('openDevSharePage', {'deviceId': deviceId});
       return _asMap(result);
     } on PlatformException catch (e) {
       return {'success': false, 'error': e.message ?? 'Share page failed'};
@@ -460,9 +406,7 @@ class GwellIotPlugin {
   /// Set SDK language ("vi", "en", "zh").
   static Future<Map<String, dynamic>> setLanguage(String code) async {
     try {
-      final result = await _channel.invokeMethod('setLanguage', {
-        'code': code,
-      });
+      final result = await _channel.invokeMethod('setLanguage', {'code': code});
       return _asMap(result);
     } on PlatformException catch (e) {
       return {'success': false, 'error': e.message ?? 'setLanguage failed'};
@@ -471,18 +415,59 @@ class GwellIotPlugin {
 
   /// Set UI configuration (brand color etc.)
   static Future<Map<String, dynamic>> setUIConfiguration({
-    required String brandColor,
+    required bool isDarkMode,
+    String brandColor = '#FF4CAF50',
+    String? brandHighlight,
+    String? brandDisable,
+    String? brand2,
+    String? brand2Highlight,
+    String? brand2Disable,
+    String? textColor,
+    String? secondaryTextColor,
+    String? tertiaryTextColor,
+    String? lightTextColor,
+    String? linkTextColor,
+    String? mainBackground,
+    String? secondaryBackground,
+    String? maskBackground,
+    String? hudBackground,
+    String? separatorLineColor,
+    String? inputLineEnable,
+    String? inputLineDisable,
+    String? stateSafe,
+    String? stateWarning,
+    String? stateError,
+    String? appName,
   }) async {
     try {
       final result = await _channel.invokeMethod('setUIConfiguration', {
+        'isDarkMode': isDarkMode,
         'brandColor': brandColor,
+        if (brandHighlight != null) 'brandHighlight': brandHighlight,
+        if (brandDisable != null) 'brandDisable': brandDisable,
+        if (brand2 != null) 'brand2': brand2,
+        if (brand2Highlight != null) 'brand2Highlight': brand2Highlight,
+        if (brand2Disable != null) 'brand2Disable': brand2Disable,
+        if (textColor != null) 'textColor': textColor,
+        if (secondaryTextColor != null) 'secondaryTextColor': secondaryTextColor,
+        if (tertiaryTextColor != null) 'tertiaryTextColor': tertiaryTextColor,
+        if (lightTextColor != null) 'lightTextColor': lightTextColor,
+        if (linkTextColor != null) 'linkTextColor': linkTextColor,
+        if (mainBackground != null) 'mainBackground': mainBackground,
+        if (secondaryBackground != null) 'secondaryBackground': secondaryBackground,
+        if (maskBackground != null) 'maskBackground': maskBackground,
+        if (hudBackground != null) 'hudBackground': hudBackground,
+        if (separatorLineColor != null) 'separatorLineColor': separatorLineColor,
+        if (inputLineEnable != null) 'inputLineEnable': inputLineEnable,
+        if (inputLineDisable != null) 'inputLineDisable': inputLineDisable,
+        if (stateSafe != null) 'stateSafe': stateSafe,
+        if (stateWarning != null) 'stateWarning': stateWarning,
+        if (stateError != null) 'stateError': stateError,
+        if (appName != null) 'appName': appName,
       });
       return _asMap(result);
     } on PlatformException catch (e) {
-      return {
-        'success': false,
-        'error': e.message ?? 'setUIConfiguration failed'
-      };
+      return {'success': false, 'error': e.message ?? 'setUIConfiguration failed'};
     }
   }
 
@@ -491,38 +476,24 @@ class GwellIotPlugin {
   /// Forward received push notification payload to SDK.
   /// iOS: GWIoT.shared.receivePushNotification(noti:)
   /// Call this when your FCM/APNs handler receives a notification.
-  static Future<Map<String, dynamic>> receivePushNotification(
-    Map<String, dynamic> payload,
-  ) async {
+  static Future<Map<String, dynamic>> receivePushNotification(Map<String, dynamic> payload) async {
     try {
-      final result = await _channel.invokeMethod('receivePushNotification', {
-        'payload': payload,
-      });
+      final result = await _channel.invokeMethod('receivePushNotification', {'payload': payload});
       return _asMap(result);
     } on PlatformException catch (e) {
-      return {
-        'success': false,
-        'error': e.message ?? 'receivePushNotification failed'
-      };
+      return {'success': false, 'error': e.message ?? 'receivePushNotification failed'};
     }
   }
 
   /// Forward push notification click to SDK.
   /// iOS: GWIoT.shared.clickPushNotification(noti:)
   /// Call this when user taps on a notification.
-  static Future<Map<String, dynamic>> clickPushNotification(
-    Map<String, dynamic> payload,
-  ) async {
+  static Future<Map<String, dynamic>> clickPushNotification(Map<String, dynamic> payload) async {
     try {
-      final result = await _channel.invokeMethod('clickPushNotification', {
-        'payload': payload,
-      });
+      final result = await _channel.invokeMethod('clickPushNotification', {'payload': payload});
       return _asMap(result);
     } on PlatformException catch (e) {
-      return {
-        'success': false,
-        'error': e.message ?? 'clickPushNotification failed'
-      };
+      return {'success': false, 'error': e.message ?? 'clickPushNotification failed'};
     }
   }
 }
