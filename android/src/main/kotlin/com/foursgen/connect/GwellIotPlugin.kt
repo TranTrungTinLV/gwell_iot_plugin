@@ -51,6 +51,7 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventCha
     private var lastRegRegion: String = "SG"
     private var lastAreaCode: String = "sg"
     private var wasLoggedIn: Boolean = false
+    private var lastEmittedDeviceIds: Set<String> = emptySet() // Throttle deviceList observer
 
     // ── FlutterPlugin ─────────────────────────────────────────────────────
 
@@ -123,13 +124,22 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventCha
             Log.w(TAG, "[EventChannel] isLogin observe failed: ${e.message}")
         }
 
-        // Device list
+        // Device list — throttled: only emit when device IDs actually change
         try {
             GWIoT.deviceList.observeForever { devices ->
-                val list = (devices as? List<*>)?.filterIsInstance<Device>()?.map { dev ->
-                    mapOf("deviceId" to dev.deviceId, "deviceName" to dev.remarkName)
-                } ?: emptyList()
-                sendEventToFlutter(mapOf("type" to "deviceListUpdated", "devices" to list))
+                val deviceInstances = (devices as? List<*>)?.filterIsInstance<Device>() ?: emptyList()
+                val currentIds = deviceInstances.map { it.deviceId }.toSet()
+
+                if (currentIds != lastEmittedDeviceIds) {
+                    lastEmittedDeviceIds = currentIds
+                    val list = deviceInstances.map { dev ->
+                        mapOf("deviceId" to dev.deviceId, "deviceName" to dev.remarkName)
+                    }
+                    Log.i(TAG, "[EventChannel] 📋 deviceList changed: ${list.size} devices (was ${lastEmittedDeviceIds.size})")
+                    sendEventToFlutter(mapOf("type" to "deviceListUpdated", "devices" to list))
+                } else {
+                    Log.d(TAG, "[EventChannel] ⏭️ deviceList unchanged (${currentIds.size} devices), skipping")
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "[EventChannel] deviceList observe failed: ${e.message}")
