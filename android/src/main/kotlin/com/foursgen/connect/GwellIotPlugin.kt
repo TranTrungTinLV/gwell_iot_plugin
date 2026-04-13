@@ -269,7 +269,15 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventCha
                 result.success(mapOf("success" to false, "message" to "No application context"))
                 return
             }
-            GwellSdkInitializer.init(app, appId, appToken, language)
+            // Resolve host app's main Activity class for SDK navigation
+            val mainActivityClass: Class<android.app.Activity>? = try {
+                activity?.javaClass?.let {
+                    @Suppress("UNCHECKED_CAST")
+                    it as Class<android.app.Activity>
+                }
+            } catch (_: Exception) { null }
+
+            GwellSdkInitializer.init(app, appId, appToken, language, mainActivityClass)
             Log.i(TAG, "[INIT_SDK] ✅ GWIoT SDK initialized")
             result.success(mapOf("success" to true, "message" to "SDK initialized"))
         } catch (e: Exception) {

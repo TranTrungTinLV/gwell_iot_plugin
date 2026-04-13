@@ -34,8 +34,9 @@ object GwellSdkInitializer {
     private var cachedAppId: String = ""
     private var cachedAppToken: String = ""
     private var cachedLanguage: String = "vi"
+    private var cachedMainActivityClass: Class<Activity>? = null
 
-    fun init(app: Application, appId: String, appToken: String, language: String = "vi") {
+    fun init(app: Application, appId: String, appToken: String, language: String = "vi", mainActivityClass: Class<Activity>? = null) {
         if (sdkInitialized) {
             Log.i(TAG, "GWIoT SDK already initialized, skipping")
             return
@@ -46,6 +47,7 @@ object GwellSdkInitializer {
         cachedAppId = appId
         cachedAppToken = appToken
         cachedLanguage = language
+        if (mainActivityClass != null) cachedMainActivityClass = mainActivityClass
 
         if (isUnsupportedEmulatorAbi()) {
             Log.w(TAG, "Skipping GWIoT initialization on x86/x86_64 emulator ABI")
@@ -79,8 +81,8 @@ object GwellSdkInitializer {
             packageInfo.versionCode
         }
 
-        // Resolve main activity class
-        val mainActivityClass: Class<Activity> = try {
+        // Resolve main activity class — prefer explicit, fallback to PackageManager
+        val resolvedActivityClass: Class<Activity> = mainActivityClass ?: cachedMainActivityClass ?: try {
             val launchIntent = app.packageManager.getLaunchIntentForPackage(app.packageName)
             val className = launchIntent?.component?.className
             if (className != null) {
@@ -92,6 +94,7 @@ object GwellSdkInitializer {
         } catch (e: Exception) {
             Activity::class.java
         }
+        Log.d(TAG, "Using mainActivityClass: ${resolvedActivityClass.name}")
 
         val option = InitOptions(
             app = app,
@@ -101,7 +104,7 @@ object GwellSdkInitializer {
                 appId = appId,
                 appToken = appToken,
             ),
-            mainActvityKlass = mainActivityClass,
+            mainActvityKlass = resolvedActivityClass,
         )
         // NOTE: Do NOT set disableAccountService=true — it prevents SDK from mounting
         // the device query component (ISyncDevTaskApi), causing NotFoundComponent error.
@@ -159,7 +162,7 @@ object GwellSdkInitializer {
         val app = cachedApp ?: throw IllegalStateException("SDK was never initialized")
         Log.i(TAG, "Force reinitializing GWIoT SDK...")
         sdkInitialized = false
-        init(app, cachedAppId, cachedAppToken, cachedLanguage)
+        init(app, cachedAppId, cachedAppToken, cachedLanguage, cachedMainActivityClass)
     }
 
     private fun isUnsupportedEmulatorAbi(): Boolean {
