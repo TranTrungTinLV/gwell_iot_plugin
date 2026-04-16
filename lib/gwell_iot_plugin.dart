@@ -16,6 +16,11 @@ class GwellIotPlugin {
   // ── EventChannel — matching iOS GWIoTEventChannel ─────────────────────
   static const _eventChannel = EventChannel('com.reoqoo/gwiot_events');
 
+  /// Cached broadcast stream — all derived streams MUST use this.
+  /// EventChannel only supports ONE active listener on Android,
+  /// so calling receiveBroadcastStream() multiple times kills previous listeners.
+  static Stream<Map<String, dynamic>>? _cachedEventStream;
+
   /// Broadcast stream of all events from native SDK.
   /// Each event is a Map with a 'type' key indicating the event type.
   ///
@@ -30,7 +35,11 @@ class GwellIotPlugin {
   /// - `pushReceived`: {type, ...payload}
   /// - `pushClicked`: {type, ...payload}
   static Stream<Map<String, dynamic>> get events {
-    return _eventChannel.receiveBroadcastStream().map((event) => Map<String, dynamic>.from(event as Map));
+    _cachedEventStream ??= _eventChannel
+        .receiveBroadcastStream()
+        .map((event) => Map<String, dynamic>.from(event as Map))
+        .asBroadcastStream();
+    return _cachedEventStream!;
   }
 
   /// Stream of login status changes.
@@ -398,6 +407,118 @@ class GwellIotPlugin {
       return _asMap(result);
     } on PlatformException catch (e) {
       return {'success': false, 'error': e.message ?? 'Share page failed'};
+    }
+  }
+
+  // ── Device Unbind / Delete ──────────────────────────────────────────────
+
+  /// Unbind (delete) a device from the account.
+  /// Equivalent to Tuya's `deleteDevice`.
+  static Future<Map<String, dynamic>> unbindDevice(String deviceId) async {
+    try {
+      final result = await _channel.invokeMethod('unbindDevice', {'deviceId': deviceId});
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Unbind failed'};
+    }
+  }
+
+  /// Alias for [unbindDevice].
+  static Future<Map<String, dynamic>> deleteDevice(String deviceId) => unbindDevice(deviceId);
+
+  // ── Firmware Upgrade ──────────────────────────────────────────────────
+
+  /// Check firmware upgrade info for a single device.
+  /// Equivalent to Tuya's `getFirmwareInfo`.
+  /// Returns `{success, hasNewVersion, info}`.
+  static Future<Map<String, dynamic>> checkDevUpgradeInfo(String deviceId) async {
+    try {
+      final result = await _channel.invokeMethod('checkDevUpgradeInfo', {'deviceId': deviceId});
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Check upgrade failed'};
+    }
+  }
+
+  /// Batch check firmware upgrade info for multiple devices.
+  /// Returns `{success, count, info}`.
+  static Future<Map<String, dynamic>> batchCheckDevUpgradeInfo(List<String> deviceIds) async {
+    try {
+      final result = await _channel.invokeMethod('batchCheckDevUpgradeInfo', {'deviceIds': deviceIds});
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Batch check failed'};
+    }
+  }
+
+  /// Open batch firmware upgrade page (SDK built-in UI).
+  static Future<Map<String, dynamic>> openBatchUpgradePage() async {
+    try {
+      final result = await _channel.invokeMethod('openBatchUpgradePage');
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Upgrade page failed'};
+    }
+  }
+
+  // ── Cloud Service & Membership ────────────────────────────────────────
+
+  /// Open cloud storage page for a device (SDK built-in UI).
+  /// Equivalent to Tuya's cloud storage handler.
+  static Future<Map<String, dynamic>> openCloudPage(String deviceId) async {
+    try {
+      final result = await _channel.invokeMethod('openCloudPage', {'deviceId': deviceId});
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Cloud page failed'};
+    }
+  }
+
+  /// Alias for [openCloudPage].
+  static Future<Map<String, dynamic>> openCloudStoragePage(String deviceId) => openCloudPage(deviceId);
+
+  /// Query membership/subscription info.
+  /// Returns `{success, info}`.
+  static Future<Map<String, dynamic>> queryMembershipInfo({bool forceRefresh = true}) async {
+    try {
+      final result = await _channel.invokeMethod('queryMembershipInfo', {'forceRefresh': forceRefresh});
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Query membership failed'};
+    }
+  }
+
+  /// Open membership center page (buy/upgrade cloud plans).
+  static Future<Map<String, dynamic>> openMembershipCenterPage() async {
+    try {
+      final result = await _channel.invokeMethod('openMembershipCenterPage');
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Membership center failed'};
+    }
+  }
+
+  // ── Share Manager ─────────────────────────────────────────────────────
+
+  /// Open share manager page — manage who has access to shared devices.
+  static Future<Map<String, dynamic>> openShareManagerPage() async {
+    try {
+      final result = await _channel.invokeMethod('openShareManagerPage');
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Share manager failed'};
+    }
+  }
+
+  // ── Album ─────────────────────────────────────────────────────────────
+
+  /// Open album/gallery for a device (screenshots & recordings).
+  static Future<Map<String, dynamic>> openAlbum(String deviceId) async {
+    try {
+      final result = await _channel.invokeMethod('openAlbum', {'deviceId': deviceId});
+      return _asMap(result);
+    } on PlatformException catch (e) {
+      return {'success': false, 'error': e.message ?? 'Album failed'};
     }
   }
 
