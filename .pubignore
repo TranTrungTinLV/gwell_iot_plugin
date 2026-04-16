@@ -1,0 +1,5 @@
+# Gradle build cache — should not be published
+android/.gradle/
+
+# Native libs (too large for pub.dev, users must add manually)
+android/libs/
