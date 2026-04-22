@@ -132,6 +132,7 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventCha
                 val currentIds = deviceInstances.map { it.deviceId }.toSet()
 
                 if (currentIds != lastEmittedDeviceIds) {
+                    val previousIds = lastEmittedDeviceIds // snapshot before update
                     lastEmittedDeviceIds = currentIds
                     scope.launch {
                         val list = deviceInstances.map { dev ->
@@ -153,6 +154,14 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventCha
                         }
                         Log.i(TAG, "[EventChannel] 📋 deviceList changed: ${list.size} devices")
                         sendEventToFlutter(mapOf("type" to "deviceListUpdated", "devices" to list))
+
+                        // ✅ Auto-emit bindSuccess khi phát hiện device mới được bind
+                        if (currentIds.size > previousIds.size) {
+                            val newIds = currentIds - previousIds
+                            Log.i(TAG, "[EventChannel] 🎉 New device(s) detected: $newIds → emitting bindSuccess")
+                            kotlinx.coroutines.delay(500) // Đợi deviceListUpdated được xử lý trước
+                            emitBindSuccessEvent()
+                        }
                     }
                 } else {
                     Log.d(TAG, "[EventChannel] ⏭️ deviceList unchanged (${currentIds.size} devices), skipping")
@@ -180,7 +189,7 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventCha
         // Device events
         try {
             GWIoT.deviceEvents.observeForever { event ->
-                
+
                 if (event == null) return@observeForever
                 Log.i(TAG, "[EventChannel] 📋 DeviceEvent: $event")
                 when (event) {
@@ -595,14 +604,23 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventCha
                 Log.d("[SCAN_QR]","[SCAN_QR]::::$scanResult")
                 // enableBuiltInHandling=true → SDK tự bind internally
                 // openScanQRCodePage returns BEFORE binding completes
-                // → Backend sync is handled by detecting new devices in deviceListUpdated stream
+                // → Emit bindSuccess sau delay để đợi SDK finish bind
                 when (scanResult) {
                     is GWResult.Success<*> -> {
-                        Log.i(TAG, "[SCAN_QR] ✅ Binding success")
+                        Log.i(TAG, "[SCAN_QR] ✅ QR recognized — waiting for SDK bind to complete...")
+                        // Emit bindSuccess sau 4s để đảm bảo device đã vào deviceList
+                        scope.launch {
+                            kotlinx.coroutines.delay(4000)
+                            Log.i(TAG, "[SCAN_QR] ⏰ Emitting bindSuccess after delay")
+                            emitBindSuccessEvent()
+                        }
                         result.success(mapOf("success" to true))
                     }
                     is GWResult.Failure<*> -> {
                         Log.i(TAG, "[SCAN_QR] ⚠️ SDK returned Failure (expected with enableBuiltInHandling=true): $scanResult")
+                        // NOTE: SDK ALWAYS returns Failure với enableBuiltInHandling=true,
+                        // nhưng vẫn mở ScanQRCodeActivity và tự bind async.
+                        // bindSuccess sẽ được emit bởi deviceList observer khi device mới xuất hiện.
                         result.success(mapOf("success" to true, "sdkResult" to scanResult.toString()))
                     }
                 }
@@ -640,23 +658,32 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventCha
         }
         scope.launch {
             try {
-                val opts = ScanQRCodeOptions(
-                    enableBuiltInHandling = true,
-                    title = "Quét mã QR",
-                    descTitle = "Quét mã QR trên thiết bị hoặc mã chia sẻ"
-                )
-                val scanResult = GWIoT.openScanQRCodePage(opts)
-                Log.d("ScanResult","scanResult:::$scanResult")
+                // Use recognizeQRCode to process QR value directly
+                // enableBuiltInHandling=true → SDK auto-handles bind/share flow
+                val recognizeResult = GWIoT.recognizeQRCode(qrValue, true)
+                Log.d(TAG, "[BIND_QR] recognizeQRCode result: $recognizeResult")
 
-                when (scanResult) {
+                when (recognizeResult) {
                     is GWResult.Success<*> -> {
-                        scope.launch { emitBindSuccessEvent() }
-                        result.success(mapOf("success" to true))
+                        Log.i(TAG, "[BIND_QR] ✅ QR recognized → waiting 4s then emitting bindSuccess")
+                        scope.launch {
+                            kotlinx.coroutines.delay(4000)
+                            emitBindSuccessEvent()
+                        }
+                        result.success(mapOf(
+                            "success" to true,
+                            "qrType" to recognizeResult.data.toString()
+                        ))
                     }
-                    is GWResult.Failure<*> -> result.success(mapOf("success" to false, "error" to scanResult.toString()))
+                    is GWResult.Failure<*> -> {
+                        result.success(mapOf(
+                            "success" to false,
+                            "error" to recognizeResult.toString()
+                        ))
+                    }
                 }
             } catch (e: Exception) {
-                result.success(mapOf("success" to false, "error" to (e.message ?: "Bind failed")))
+                result.success(mapOf("success" to false, "error" to (e.message ?: "recognizeQRCode failed")))
             }
         }
     }
@@ -738,7 +765,7 @@ class GwellIotPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventCha
         scope.launch {
             try {
                 GWIoT.openMultiLivePage()
-
+                
                 Log.i(TAG, "[MULTI_LIVE] ✅ Opened")
                 result.success(mapOf("success" to true))
             } catch (e: Exception) {

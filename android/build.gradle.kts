@@ -1,6 +1,6 @@
 plugins {
-    id("com.android.library")
-    id("org.jetbrains.kotlin.android")
+    id("com.android.library") version "8.12.3"
+    id("org.jetbrains.kotlin.android") version "2.1.0"
 }
 
 val GWIOT_NEXUS_BASE_URL = "https://nexus-sg.gwell.cc/nexus/repository/"
